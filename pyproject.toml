@@ -22,6 +22,10 @@ dependencies = [
 dev = [
     "pytest>=7.0.0",
 ]
+gui = [
+    "customtkinter>=5.2.0",
+    "tkinterdnd2>=0.3.0",
+]
 
 [project.scripts]
 dat = "dat.main:main"

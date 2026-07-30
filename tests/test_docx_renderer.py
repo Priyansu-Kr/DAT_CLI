@@ -45,5 +45,44 @@ class TestDocxRenderer(unittest.TestCase):
             text_content = "\n".join([p.text for p in document.paragraphs])
             self.assertIn("Navigation Drawer Implementation", text_content)
 
+    def test_docx_renderer_respects_section_toggles(self):
+        renderer = DocxRenderer()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_file = os.path.join(tmp_dir, "toggled_doc.docx")
+
+            summary = ChangeSummary(
+                overview="Implemented navigation drawer layout.",
+                key_points=["Added Nav.kt drawer handler."],
+                impact_areas=["UI Navigation"],
+                test_cases=["Open drawer via swipe gesture"],
+            )
+
+            doc_req = DocRequest(
+                title="Navigation Drawer Implementation",
+                author="Test Developer",
+                ticket_id="PROJ-99",
+                summary=summary,
+                output_path=output_file,
+                sections={
+                    "header": False,
+                    "metadata_table": False,
+                    "ai_summary": False,
+                    "changes_done": True,
+                    "test_cases_table": False,
+                    "screenshots": False,
+                },
+            )
+
+            result_path = renderer.render(doc_req)
+            document = docx.Document(result_path)
+            text_content = "\n".join([p.text for p in document.paragraphs])
+
+            self.assertNotIn("Navigation Drawer Implementation", text_content)
+            self.assertNotIn("Task Detail", text_content)
+            self.assertNotIn("AI Summary", text_content)
+            self.assertIn("Changes Done", text_content)
+            self.assertIn("Added Nav.kt drawer handler.", text_content)
+            self.assertEqual(len(document.tables), 0)
+
 if __name__ == "__main__":
     unittest.main()

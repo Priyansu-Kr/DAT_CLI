@@ -5,6 +5,7 @@ from dat.commands.generate_doc import GenerateDocCommand
 from dat.commands.screenshot import ScreenshotCommand
 from dat.commands.doctor import DoctorCommand
 from dat.commands.config_cmd import ConfigCommand
+from dat.commands.gui_cmd import GuiCommand
 from dat.utils.exit_codes import ExitCode
 
 
@@ -21,6 +22,7 @@ def main():
         "screenshot": ScreenshotCommand(),
         "doctor": DoctorCommand(),
         "config": ConfigCommand(),
+        "gui": GuiCommand(),
     }
 
     command_handler = cmd_map.get(args.command)

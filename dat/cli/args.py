@@ -25,6 +25,9 @@ def parse_args(args_list: Optional[List[str]] = None) -> argparse.Namespace:
     ss_parser.add_argument("-o", "--output", default="screenshot.png", help="Output screenshot path")
     ss_parser.add_argument("-d", "--device", help="Specific ADB device serial number")
 
+    # dat gui
+    subparsers.add_parser("gui", help="Launch the DAT Control Center GUI dashboard")
+
     # dat doctor
     subparsers.add_parser("doctor", help="Run system diagnostics & verify tool dependencies")
 

@@ -10,10 +10,12 @@ from datetime import datetime
 from PIL import Image
 
 from dat.renderers.base_renderer import BaseRenderer
-from dat.models.doc_request import DocRequest
+from dat.models.doc_request import DocRequest, DEFAULT_SECTIONS
+from dat.renderers.screenshot_grouping import group_screenshots_by_test_case
 
 class DocxRenderer(BaseRenderer):
     def render(self, doc_request: DocRequest) -> str:
+        sections = doc_request.sections or DEFAULT_SECTIONS
         doc = docx.Document()
 
         # Global Font Setting: Arial
@@ -30,120 +32,146 @@ class DocxRenderer(BaseRenderer):
             heading_style.font.bold = True
 
         # Set page margins
-        sections = doc.sections
-        for section in sections:
+        for section in doc.sections:
             section.top_margin = Inches(1.0)
             section.bottom_margin = Inches(1.0)
             section.left_margin = Inches(1.0)
             section.right_margin = Inches(1.0)
 
         # 1. TOP HEADING (TICKET - TOPIC)
-        p_title = doc.add_paragraph()
-        p_title.alignment = WD_ALIGN_PARAGRAPH.LEFT
-        run_title = p_title.add_run(doc_request.title) # Formatted as "TICKET - TOPIC"
-        run_title.font.name = 'Arial'
-        run_title.font.size = Pt(18)
-        run_title.font.bold = True
-        run_title.font.color.rgb = RGBColor(0, 0, 0)
-        p_title.paragraph_format.space_after = Pt(0)
+        if sections.get("header", True):
+            p_title = doc.add_paragraph()
+            p_title.alignment = WD_ALIGN_PARAGRAPH.LEFT
+            run_title = p_title.add_run(doc_request.title) # Formatted as "TICKET - TOPIC"
+            run_title.font.name = 'Arial'
+            run_title.font.size = Pt(18)
+            run_title.font.bold = True
+            run_title.font.color.rgb = RGBColor(0, 0, 0)
+            p_title.paragraph_format.space_after = Pt(0)
 
-        # ~2 line space after heading
-        for _ in range(2):
+            # ~2 line space after heading
+            for _ in range(2):
+                doc.add_paragraph()
+
+        # 2. TASK DETAIL HEADER + 3. METADATA TABLE (5 rows x 2 columns)
+        if sections.get("metadata_table", True):
+            p_task_hdr = doc.add_paragraph()
+            run_task_hdr = p_task_hdr.add_run("Task Detail")
+            run_task_hdr.font.name = 'Arial'
+            run_task_hdr.font.size = Pt(16)
+            run_task_hdr.font.bold = True
+            run_task_hdr.font.color.rgb = RGBColor(0, 0, 0)
+            p_task_hdr.paragraph_format.space_after = Pt(6)
+
+            meta_table = doc.add_table(rows=5, cols=2)
+            meta_table.style = 'Table Grid'
+            meta_table.alignment = WD_TABLE_ALIGNMENT.LEFT
+
+            # Split title back for Short Description if needed
+            # Format of doc_request.title is "TICKET TOPIC"
+            # We want only the TOPIC part for Short Description
+            title_parts = doc_request.title.split(' ', 1)
+            short_desc = title_parts[1] if len(title_parts) > 1 else doc_request.title
+
+            labels = ["Ticket No.", "Short Description", "Document Date", "Created By", "Approved By"]
+            values = [
+                doc_request.ticket_id or "",
+                short_desc,
+                datetime.now().strftime("%d-%B-%Y"),
+                doc_request.author,
+                ""
+            ]
+
+            for i in range(5):
+                row = meta_table.rows[i]
+                # Set row height/padding (approximate by paragraph spacing)
+                row.height = Pt(30)
+
+                cell_lbl = row.cells[0]
+                cell_val = row.cells[1]
+
+                # Label Styling
+                p_l = cell_lbl.paragraphs[0]
+                p_l.paragraph_format.space_before = Pt(8)
+                p_l.paragraph_format.space_after = Pt(8)
+                p_l.paragraph_format.left_indent = Pt(6)
+                r_l = p_l.add_run(labels[i])
+                r_l.font.name = 'Arial'
+                r_l.font.bold = False
+                r_l.font.size = Pt(11)
+                r_l.font.color.rgb = RGBColor(0, 0, 0)
+
+                # Value Styling
+                p_v = cell_val.paragraphs[0]
+                p_v.paragraph_format.space_before = Pt(8)
+                p_v.paragraph_format.space_after = Pt(8)
+                p_v.paragraph_format.left_indent = Pt(6)
+                r_v = p_v.add_run(str(values[i]))
+                r_v.font.name = 'Arial'
+                r_v.font.size = Pt(11)
+                r_v.font.color.rgb = RGBColor(0, 0, 0)
+
+            doc.add_paragraph().paragraph_format.space_after = Pt(24)
+
+        # 4. AI SUMMARY (generative overview)
+        if sections.get("ai_summary", True) and doc_request.summary and doc_request.summary.overview:
+            h_summary = doc.add_heading(level=1)
+            run_summary = h_summary.add_run("AI Summary")
+            run_summary.font.name = 'Arial'
+            run_summary.font.color.rgb = RGBColor(0, 0, 0)
             doc.add_paragraph()
 
-        # 2. TASK DETAIL HEADER
-        p_task_hdr = doc.add_paragraph()
-        run_task_hdr = p_task_hdr.add_run("Task Detail")
-        run_task_hdr.font.name = 'Arial'
-        run_task_hdr.font.size = Pt(16)
-        run_task_hdr.font.bold = True
-        run_task_hdr.font.color.rgb = RGBColor(0, 0, 0)
-        p_task_hdr.paragraph_format.space_after = Pt(6)
+            p_overview = doc.add_paragraph()
+            r_overview = p_overview.add_run(doc_request.summary.overview)
+            r_overview.font.name = 'Arial'
+            r_overview.font.size = Pt(11)
+            r_overview.font.color.rgb = RGBColor(0, 0, 0)
 
-        # 3. METADATA TABLE (5 rows x 2 columns)
-        meta_table = doc.add_table(rows=5, cols=2)
-        meta_table.style = 'Table Grid'
-        meta_table.alignment = WD_TABLE_ALIGNMENT.LEFT
-        
-        # Split title back for Short Description if needed
-        # Format of doc_request.title is "TICKET TOPIC"
-        # We want only the TOPIC part for Short Description
-        title_parts = doc_request.title.split(' ', 1)
-        short_desc = title_parts[1] if len(title_parts) > 1 else doc_request.title
+            doc.add_paragraph().paragraph_format.space_after = Pt(24)
 
-        labels = ["Ticket No.", "Short Description", "Document Date", "Created By", "Approved By"]
-        values = [
-            doc_request.ticket_id or "",
-            short_desc,
-            datetime.now().strftime("%d-%B-%Y"),
-            doc_request.author,
-            ""
-        ]
+        # 5. CHANGES DONE BLOCK
+        if sections.get("changes_done", True):
+            h_changes = doc.add_heading(level=1)
+            run_changes = h_changes.add_run("Changes Done")
+            run_changes.font.name = 'Arial'
+            run_changes.font.color.rgb = RGBColor(0, 0, 0)
+            # Add one line spacing below heading
+            doc.add_paragraph()
 
-        for i in range(5):
-            row = meta_table.rows[i]
-            # Set row height/padding (approximate by paragraph spacing)
-            row.height = Pt(30) 
-            
-            cell_lbl = row.cells[0]
-            cell_val = row.cells[1]
-            
-            # Label Styling
-            p_l = cell_lbl.paragraphs[0]
-            p_l.paragraph_format.space_before = Pt(8)
-            p_l.paragraph_format.space_after = Pt(8)
-            p_l.paragraph_format.left_indent = Pt(6)
-            r_l = p_l.add_run(labels[i])
-            r_l.font.name = 'Arial'
-            r_l.font.bold = False
-            r_l.font.size = Pt(11)
-            r_l.font.color.rgb = RGBColor(0, 0, 0)
-            
-            # Value Styling
-            p_v = cell_val.paragraphs[0]
-            p_v.paragraph_format.space_before = Pt(8)
-            p_v.paragraph_format.space_after = Pt(8)
-            p_v.paragraph_format.left_indent = Pt(6)
-            r_v = p_v.add_run(str(values[i]))
-            r_v.font.name = 'Arial'
-            r_v.font.size = Pt(11)
-            r_v.font.color.rgb = RGBColor(0, 0, 0)
+            if doc_request.summary:
+                # Affected Modules Sub-section
+                p_aff = doc.add_paragraph()
+                r_aff_label = p_aff.add_run("Affected Module: ")
+                r_aff_label.font.name = 'Arial'
+                r_aff_label.font.bold = True
+                r_aff_label.font.size = Pt(11)
 
-        doc.add_paragraph().paragraph_format.space_after = Pt(24)
+                modules_text = ", ".join(doc_request.summary.impact_areas) if doc_request.summary.impact_areas else "Main Module"
+                r_aff_val = p_aff.add_run(modules_text)
+                r_aff_val.font.name = 'Arial'
+                r_aff_val.font.size = Pt(11)
 
-        # 4. CHANGES DONE BLOCK
-        h_changes = doc.add_heading(level=1)
-        run_changes = h_changes.add_run("Changes Done")
-        run_changes.font.name = 'Arial'
-        run_changes.font.color.rgb = RGBColor(0, 0, 0)
-        # Add one line spacing below heading
-        doc.add_paragraph()
-        
-        if doc_request.summary:
-            # Affected Modules Sub-section
-            p_aff = doc.add_paragraph()
-            r_aff_label = p_aff.add_run("Affected Module: ")
-            r_aff_label.font.name = 'Arial'
-            r_aff_label.font.bold = True
-            r_aff_label.font.size = Pt(11)
-            
-            modules_text = ", ".join(doc_request.summary.impact_areas) if doc_request.summary.impact_areas else "Main Module"
-            r_aff_val = p_aff.add_run(modules_text)
-            r_aff_val.font.name = 'Arial'
-            r_aff_val.font.size = Pt(11)
-            
-            # Key Points (Concise)
-            for point in doc_request.summary.key_points[:3]:
+                # Key Points (Concise)
+                for point in doc_request.summary.key_points:
+                    p = doc.add_paragraph(style='List Bullet')
+                    r = p.add_run(point)
+                    r.font.name = 'Arial'
+                    r.font.size = Pt(11)
+                    r.font.color.rgb = RGBColor(0, 0, 0)
+            else:
                 p = doc.add_paragraph(style='List Bullet')
-                r = p.add_run(point)
+                r = p.add_run("Implemented core logic changes.")
                 r.font.name = 'Arial'
                 r.font.size = Pt(11)
                 r.font.color.rgb = RGBColor(0, 0, 0)
-            
+
+            doc.add_paragraph().paragraph_format.space_after = Pt(24)
+
+        # 6. TEST CASES TABLE (3 columns: Index, Case, Status)
+        if sections.get("test_cases_table", True) and doc_request.summary:
             # One line gap before test cases table
             doc.add_paragraph()
 
-            # Test Cases Table (3 columns: Index, Case, Status)
             if doc_request.summary.test_cases:
                 test_table = doc.add_table(rows=len(doc_request.summary.test_cases) + 1, cols=3)
                 test_table.style = 'Table Grid'
@@ -177,7 +205,7 @@ class DocxRenderer(BaseRenderer):
                     p.paragraph_format.left_indent = Pt(6)
 
                 # Data Rows
-                for i, case in enumerate(doc_request.summary.test_cases[:3]):
+                for i, case in enumerate(doc_request.summary.test_cases):
                     row = test_table.rows[i+1]
                     row.height = Pt(30)
                     
@@ -214,17 +242,10 @@ class DocxRenderer(BaseRenderer):
                     p_stat.paragraph_format.space_after = Pt(8)
                     p_stat.paragraph_format.left_indent = Pt(6)
 
-        else:
-            p = doc.add_paragraph(style='List Bullet')
-            r = p.add_run("Implemented core logic changes.")
-            r.font.name = 'Arial'
-            r.font.size = Pt(11)
-            r.font.color.rgb = RGBColor(0, 0, 0)
+            doc.add_paragraph().paragraph_format.space_after = Pt(24)
 
-        doc.add_paragraph().paragraph_format.space_after = Pt(24)
-
-        # 5. SCREENSHOTS
-        if doc_request.screenshots:
+        # 7. SCREENSHOTS
+        if sections.get("screenshots", True) and doc_request.screenshots:
             doc.add_page_break()
             h_shots = doc.add_heading(level=1)
             run_shots = h_shots.add_run("Screenshots")
@@ -232,37 +253,19 @@ class DocxRenderer(BaseRenderer):
             run_shots.font.color.rgb = RGBColor(0, 0, 0)
             doc.add_paragraph()
 
-            # Mapping screenshots to test cases
-            # If we have N test cases and M screenshots, we distribute M over N
+            # Group screenshots under their assigned test case (or auto-distribute
+            # across test cases when no explicit assignment was made).
             test_cases = doc_request.summary.test_cases if doc_request.summary else []
-            num_cases = len(test_cases)
-            all_shots = doc_request.screenshots
-            num_shots = len(all_shots)
-            
-            # Simple distribution logic: first case gets first shot, etc.
-            # If more shots than cases, the last case gets the remainder
-            # Or if we want to repeat headers on each page as requested
-            
-            # Improved distribution logic: distribute remainder to first few cases
-            # so that we get "2 then 1" instead of "1 then 2"
-            avg_shots = num_shots // num_cases if num_cases > 0 else 0
-            remainder_shots = num_shots % num_cases if num_cases > 0 else 0
-            
-            current_shot_idx = 0
-            
-            for case_idx, case_text in enumerate(test_cases):
+            groups = group_screenshots_by_test_case(doc_request.screenshots, test_cases)
+
+            for group_idx, (case_idx, label, case_shots) in enumerate(groups):
                 # Add Test Case Header: Arial 18, Not Bold
                 p_tc = doc.add_paragraph()
-                r_tc = p_tc.add_run(f"Test Case {case_idx + 1} : {case_text}")
+                r_tc = p_tc.add_run(label)
                 r_tc.font.name = 'Arial'
                 r_tc.font.size = Pt(18)
                 r_tc.font.bold = False
                 p_tc.paragraph_format.space_after = Pt(12)
-                
-                # Determine shots for this case (distributing remainder to early cases)
-                count = avg_shots + (1 if case_idx < remainder_shots else 0)
-                case_shots = all_shots[current_shot_idx : current_shot_idx + count]
-                current_shot_idx += count
 
                 # Render shots for this specific test case
                 portrait_queue = []
@@ -300,7 +303,7 @@ class DocxRenderer(BaseRenderer):
                             doc.add_page_break()
                             # Repeat the Test Case header on new page if it continues
                             p_tc_cont = doc.add_paragraph()
-                            r_tc_cont = p_tc_cont.add_run(f"Test Case {case_idx + 1} : {case_text} (cont.)")
+                            r_tc_cont = p_tc_cont.add_run(f"{label} (cont.)")
                             r_tc_cont.font.name = 'Arial'
                             r_tc_cont.font.size = Pt(18)
                             r_tc_cont.font.bold = False
@@ -310,9 +313,9 @@ class DocxRenderer(BaseRenderer):
                         p_img.add_run().add_picture(shot.file_path, width=Inches(6.5))
                 
                 flush_portrait_queue(portrait_queue, doc)
-                
-                # Add page break between test cases if not the last one
-                if case_idx < num_cases - 1 and len(case_shots) > 0:
+
+                # Add page break between groups if not the last one
+                if group_idx < len(groups) - 1 and len(case_shots) > 0:
                     doc.add_page_break()
 
         output_path = os.path.abspath(doc_request.output_path)

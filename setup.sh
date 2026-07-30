@@ -30,12 +30,13 @@ pip install requests pillow python-docx pyyaml rich
 
 # 3. Create the 'dat' command shortcut
 echo "🔗 Creating 'dat' command shortcut in $SHELL_CONFIG..."
+PROJECT_ROOT=$(cd "$(dirname "$0")" && pwd)
 # Remove any existing alias to avoid duplicates
 if [ -f "$SHELL_CONFIG" ]; then
     sed -i '' '/alias dat=/d' "$SHELL_CONFIG" 2>/dev/null || sed -i '/alias dat=/d' "$SHELL_CONFIG"
 fi
-# Add the new absolute path alias
-echo "alias dat='$(pwd)/venv/bin/dat'" >> "$SHELL_CONFIG"
+# Add the new absolute path alias with double-layer quoting for spaces
+echo "alias dat='\"$PROJECT_ROOT/venv/bin/dat\"'" >> "$SHELL_CONFIG"
 
 echo "✅ Setup Complete!"
 echo "⚠️  ACTION REQUIRED: Run 'source $SHELL_CONFIG' or restart your terminal."

@@ -1,6 +1,8 @@
 import sys
 import os
 import time
+import platform
+import subprocess
 from typing import Dict, Any
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 from rich.console import Console
@@ -56,22 +58,51 @@ class GenerateDocCommand(BaseCommand):
 
         # 2. Feature: Open file dialog to select multiple images from computer
         if args.get("select_images"):
-            try:
-                import tkinter as tk
-                from tkinter import filedialog
-                root = tk.Tk()
-                root.withdraw()
-                # Ensure the window stays on top
-                root.attributes("-topmost", True)
-                selected = filedialog.askopenfilenames(
-                    title="Select Screenshots to include in Documentation",
-                    filetypes=[("Image files", "*.png *.jpg *.jpeg *.bmp *.webp")]
-                )
-                if selected:
-                    image_paths.extend(list(selected))
-                root.destroy()
-            except Exception as e:
-                console.print(f"[yellow]Warning: Could not open file dialog: {e}[/yellow]")
+            selected = []
+            
+            # 1. Try macOS Native Picker (Bypasses the tkinter crash)
+            if platform.system() == "Darwin":
+                try:
+                    script = (
+                        'set theFiles to choose file with prompt '
+                        '"Select Screenshots to include in Documentation" '
+                        'of type {"png", "jpg", "jpeg", "webp"} '
+                        'with multiple selections allowed\n'
+                        'set thePaths to {}\n'
+                        'repeat with aFile in theFiles\n'
+                        '    set end of thePaths to POSIX path of aFile\n'
+                        'end repeat\n'
+                        'set AppleScript\'s text item delimiters to linefeed\n'
+                        'return thePaths as text'
+                    )
+                    result = subprocess.run(
+                        ["osascript", "-e", script],
+                        capture_output=True, text=True
+                    )
+                    if result.returncode == 0 and result.stdout.strip():
+                        selected = [p for p in result.stdout.strip().split("\n") if p]
+                except Exception as e:
+                    console.print(f"[yellow]Native Mac picker failed, trying fallback: {e}[/yellow]")
+
+            # 2. Fallback to Tkinter for Windows/Linux (or if Mac script failed)
+            if not selected:
+                try:
+                    import tkinter as tk
+                    from tkinter import filedialog
+                    root = tk.Tk()
+                    root.withdraw()
+                    # Ensure the window stays on top
+                    root.attributes("-topmost", True)
+                    selected = filedialog.askopenfilenames(
+                        title="Select Screenshots to include in Documentation",
+                        filetypes=[("Image files", "*.png *.jpg *.jpeg *.bmp *.webp")]
+                    )
+                    root.destroy()
+                except Exception as e:
+                    console.print(f"[yellow]Warning: Could not open file dialog: {e}[/yellow]")
+
+            if selected:
+                image_paths.extend(list(selected))
 
         with Progress(
             SpinnerColumn(),

@@ -7,36 +7,50 @@ class GitService:
     def __init__(self, git_adapter: Optional[GitAdapter] = None):
         self.adapter = git_adapter or GitAdapter()
 
-    def get_git_info(self, cwd: Optional[str] = None) -> GitInfo:
-        if not self.adapter.is_git_repo(cwd):
-            return GitInfo(
-                branch_name="standalone-repo",
-                inferred_title="Software Feature Documentation",
-                ticket_id=None,
-                author_name="Developer",
-                repo_name=self.adapter.get_repo_name(cwd),
-                changed_files=[],
-                recent_commits=[],
-                raw_diff=""
-            )
-
-        branch_name = self.adapter.get_current_branch(cwd)
-        inferred_title, ticket_id, author_name = self.parse_branch_name(branch_name)
-        repo_name = self.adapter.get_repo_name(cwd)
-        changed_files = self.adapter.get_changed_files(cwd)
-        recent_commits = self.adapter.get_recent_commits(limit=5, cwd=cwd)
-        raw_diff = self.adapter.get_raw_diff(cwd)
-
+    def _default_git_info(self, cwd: Optional[str] = None) -> GitInfo:
+        try:
+            repo_name = self.adapter.get_repo_name(cwd)
+        except Exception:
+            repo_name = "unknown-repo"
         return GitInfo(
-            branch_name=branch_name,
-            inferred_title=inferred_title,
-            ticket_id=ticket_id,
-            author_name=author_name,
+            branch_name="standalone-repo",
+            inferred_title="Software Feature Documentation",
+            ticket_id=None,
+            author_name="Developer",
             repo_name=repo_name,
-            changed_files=changed_files,
-            recent_commits=recent_commits,
-            raw_diff=raw_diff
+            changed_files=[],
+            recent_commits=[],
+            raw_diff=""
         )
+
+    def get_git_info(self, cwd: Optional[str] = None) -> GitInfo:
+        # Never let a git failure (missing binary, corrupted repo, permission
+        # errors, unexpected output) propagate up - always hand back usable
+        # default data so callers (CLI and GUI) can keep going.
+        try:
+            if not self.adapter.is_git_repo(cwd):
+                return self._default_git_info(cwd)
+
+            branch_name = self.adapter.get_current_branch(cwd)
+            inferred_title, ticket_id, author_name = self.parse_branch_name(branch_name)
+            repo_name = self.adapter.get_repo_name(cwd)
+            changed_files = self.adapter.get_changed_files(cwd)
+            recent_commits = self.adapter.get_recent_commits(limit=5, cwd=cwd)
+            raw_diff = self.adapter.get_raw_diff(cwd)
+
+            return GitInfo(
+                branch_name=branch_name,
+                inferred_title=inferred_title,
+                ticket_id=ticket_id,
+                author_name=author_name,
+                repo_name=repo_name,
+                changed_files=changed_files,
+                recent_commits=recent_commits,
+                raw_diff=raw_diff
+            )
+        except Exception as e:
+            print(f"[Warning] Git information unavailable, using defaults: {e}")
+            return self._default_git_info(cwd)
 
     def parse_branch_name(self, branch_name: str) -> Tuple[str, Optional[str], Optional[str]]:
         # Example input: feature/NSWM-6374-Priyansu-Kumar-Add-Bin-Ward-Enable-Disable-Toggle-in-Collector-App
@@ -71,13 +85,21 @@ class GitService:
             elif len(parts) > 1:
                 start_idx = 1
                 author_parts = parts[:1]
+            else:
+                # Single-segment branch (e.g. "main") - there's no author to
+                # extract, the lone word is the whole topic.
+                author_parts = []
 
         topic_parts = parts[start_idx:]
-        topic = " ".join(topic_parts)
-        
+        # Title-case plain lowercase segments (typical of dash-separated
+        # branch text); preserve segments that already carry mixed case
+        # (e.g. camelCase or acronyms like "iOS") so the camelCase split
+        # below still has something to work with.
+        topic = " ".join(p.capitalize() if p.islower() else p for p in topic_parts)
+
         # Format Author Name
         author_name = " ".join([p.capitalize() for p in author_parts]) if author_parts else None
-        
+
         # Final cleaning: Handle CamelCase if any
         topic = re.sub(r'([a-z])([A-Z])', r'\1 \2', topic).strip()
         

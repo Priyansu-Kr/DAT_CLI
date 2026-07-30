@@ -21,6 +21,8 @@ from dat.gui import theme
 from dat.gui.panels.control_panel import ControlPanel
 from dat.gui.panels.preview_panel import PreviewPanel
 from dat.gui.state import GuiState, build_preview_content
+from dat.models.git_info import GitInfo
+from dat.services.ai_service import default_change_summary
 from dat.utils.container import Container
 
 
@@ -33,6 +35,10 @@ class DATGuiApp(*_DND_MIXIN):
             except Exception:
                 pass
 
+        # Arial/Inter aren't installed by default on most Linux systems -
+        # pick the closest available match now that a Tk root exists.
+        theme.resolve_fonts()
+
         self.container = container or Container.get_instance()
 
         ctk.set_appearance_mode("dark")
@@ -43,7 +49,18 @@ class DATGuiApp(*_DND_MIXIN):
         self.minsize(960, 600)
         self.configure(fg_color=theme.BG_DEEP_DARK)
 
-        git_info = self.container.git_service.get_git_info()
+        # GitService already guarantees a usable default GitInfo even when
+        # git itself is unavailable/misbehaves, but guard here too so a
+        # truly unexpected error can't stop the window from opening at all.
+        try:
+            git_info = self.container.git_service.get_git_info()
+        except Exception as e:
+            print(f"[Warning] Could not read git info, using defaults: {e}")
+            git_info = GitInfo(
+                branch_name="standalone-repo",
+                inferred_title="Software Feature Documentation",
+                author_name="Developer",
+            )
         self.state_model = GuiState.from_git_info(git_info, author=self.container.config.author_name)
 
         self.grid_columnconfigure(0, weight=0)
@@ -141,11 +158,14 @@ class DATGuiApp(*_DND_MIXIN):
         git_info = self.state_model.git_info
 
         def worker():
+            # AIService already guarantees a usable default ChangeSummary
+            # even when the AI provider fails, but guard here too so the
+            # left panel never ends up permanently blank.
             try:
                 summary = self.container.ai_service.generate_change_summary(git_info)
             except Exception as e:
-                print(f"[Warning] AI summary generation failed: {e}")
-                return
+                print(f"[Warning] AI summary generation failed, using defaults: {e}")
+                summary = default_change_summary(getattr(git_info, "inferred_title", None))
             self.after(0, lambda: self._apply_summary(summary))
 
         threading.Thread(target=worker, daemon=True).start()

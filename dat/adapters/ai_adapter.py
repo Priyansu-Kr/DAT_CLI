@@ -64,11 +64,33 @@ class AIAdapter:
             test_cases=data.get("test_cases", [])
         )
 
+    LANGUAGE_EXTENSIONS = {
+        ".py": "Python",
+        ".kt": "Kotlin",
+        ".java": "Java",
+        ".swift": "Swift",
+        ".js": "JavaScript",
+        ".ts": "TypeScript",
+        ".xml": "UI/Layout",
+        ".html": "HTML",
+        ".css": "CSS",
+    }
+
     def _generate_rule_based_summary(self, title: str, changed_files: List[str], commits: List[str], raw_diff: str) -> ChangeSummary:
         overview = f"Implemented {title} updates across {len(changed_files)} workspace files."
+
+        languages = []
+        for f in changed_files:
+            lang = self.LANGUAGE_EXTENSIONS.get(os.path.splitext(f)[1].lower())
+            if lang and lang not in languages:
+                languages.append(lang)
+
+        key_points = [f"Updated {lang} logic" for lang in languages[:2]] or ["Updated core logic"]
+        key_points.append("Verified UI changes")
+
         return ChangeSummary(
             overview=overview,
-            key_points=["Updated core logic", "Verified UI changes"],
+            key_points=key_points,
             impact_areas=["Main Module"],
             test_recommendations=["Verify feature on emulator"],
             test_cases=["Verify that core feature requirements are met", "Ensure UI elements are displayed correctly"]

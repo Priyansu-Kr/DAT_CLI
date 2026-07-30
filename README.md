@@ -28,7 +28,7 @@ This toolkit includes a universal setup script that works on **Linux (Ubuntu/Deb
 
 1.  **Clone the repository:**
     ```bash
-    git clone https://github.com/YOUR_USERNAME/DAT_CLI.git
+    git clone https://github.com/Priyansu-Kr/DAT_CLI.git
     cd DAT_CLI
     ```
 

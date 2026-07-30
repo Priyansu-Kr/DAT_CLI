@@ -18,6 +18,9 @@ class GuiCommand(BaseCommand):
             )
             return ExitCode.VALIDATION_ERROR
 
+        from dat.gui import macos_compat
+        macos_compat.apply()
+
         try:
             import customtkinter  # noqa: F401
         except ImportError:
@@ -27,6 +30,9 @@ class GuiCommand(BaseCommand):
                 "  pip install customtkinter tkinterdnd2"
             )
             return ExitCode.VALIDATION_ERROR
+        except Exception as e:
+            print(f"[Error] customtkinter failed to load: {e}")
+            return ExitCode.UNEXPECTED_ERROR
 
         from dat.gui.app import DATGuiApp
 

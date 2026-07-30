@@ -14,7 +14,6 @@ class ChangeSummary:
 DEFAULT_SECTIONS: Dict[str, bool] = {
     "header": True,
     "metadata_table": True,
-    "ai_summary": True,
     "changes_done": True,
     "test_cases_table": True,
     "screenshots": True,
@@ -25,6 +24,7 @@ class DocRequest:
     title: str
     subtitle: Optional[str] = None
     author: str = "Developer"
+    approved_by: str = ""
     ticket_id: Optional[str] = None
     git_info: Optional[GitInfo] = None
     summary: Optional[ChangeSummary] = None

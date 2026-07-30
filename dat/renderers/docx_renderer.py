@@ -79,7 +79,7 @@ class DocxRenderer(BaseRenderer):
                 short_desc,
                 datetime.now().strftime("%d-%B-%Y"),
                 doc_request.author,
-                ""
+                doc_request.approved_by
             ]
 
             for i in range(5):
@@ -113,23 +113,7 @@ class DocxRenderer(BaseRenderer):
 
             doc.add_paragraph().paragraph_format.space_after = Pt(24)
 
-        # 4. AI SUMMARY (generative overview)
-        if sections.get("ai_summary", True) and doc_request.summary and doc_request.summary.overview:
-            h_summary = doc.add_heading(level=1)
-            run_summary = h_summary.add_run("AI Summary")
-            run_summary.font.name = 'Arial'
-            run_summary.font.color.rgb = RGBColor(0, 0, 0)
-            doc.add_paragraph()
-
-            p_overview = doc.add_paragraph()
-            r_overview = p_overview.add_run(doc_request.summary.overview)
-            r_overview.font.name = 'Arial'
-            r_overview.font.size = Pt(11)
-            r_overview.font.color.rgb = RGBColor(0, 0, 0)
-
-            doc.add_paragraph().paragraph_format.space_after = Pt(24)
-
-        # 5. CHANGES DONE BLOCK
+        # 4. CHANGES DONE BLOCK
         if sections.get("changes_done", True):
             h_changes = doc.add_heading(level=1)
             run_changes = h_changes.add_run("Changes Done")
@@ -167,7 +151,7 @@ class DocxRenderer(BaseRenderer):
 
             doc.add_paragraph().paragraph_format.space_after = Pt(24)
 
-        # 6. TEST CASES TABLE (3 columns: Index, Case, Status)
+        # 5. TEST CASES TABLE (3 columns: Index, Case, Status)
         if sections.get("test_cases_table", True) and doc_request.summary:
             # One line gap before test cases table
             doc.add_paragraph()
@@ -244,7 +228,7 @@ class DocxRenderer(BaseRenderer):
 
             doc.add_paragraph().paragraph_format.space_after = Pt(24)
 
-        # 7. SCREENSHOTS
+        # 6. SCREENSHOTS
         if sections.get("screenshots", True) and doc_request.screenshots:
             doc.add_page_break()
             h_shots = doc.add_heading(level=1)

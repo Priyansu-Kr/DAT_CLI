@@ -8,6 +8,9 @@ import threading
 from tkinter import filedialog, messagebox
 from typing import List, Optional
 
+from dat.gui import macos_compat
+macos_compat.apply()
+
 import customtkinter as ctk
 
 try:
@@ -27,7 +30,15 @@ from dat.utils.container import Container
 
 
 class DATGuiApp(*_DND_MIXIN):
-    def __init__(self, container: Optional[Container] = None):
+    def __init__(
+        self,
+        container: Optional[Container] = None,
+        title_override: Optional[str] = None,
+        ticket_override: Optional[str] = None,
+        author_override: Optional[str] = None,
+        approved_by_override: Optional[str] = None,
+        image_paths: Optional[List[str]] = None,
+    ):
         super().__init__()
         if TkinterDnD is not None:
             try:
@@ -61,7 +72,15 @@ class DATGuiApp(*_DND_MIXIN):
                 inferred_title="Software Feature Documentation",
                 author_name="Developer",
             )
-        self.state_model = GuiState.from_git_info(git_info, author=self.container.config.author_name)
+        self.state_model = GuiState.from_git_info(
+            git_info, author=author_override or self.container.config.author_name
+        )
+        if title_override:
+            self.state_model.topic = title_override
+        if ticket_override:
+            self.state_model.ticket_id = ticket_override
+        if approved_by_override:
+            self.state_model.approved_by = approved_by_override
 
         self.grid_columnconfigure(0, weight=0)
         self.grid_columnconfigure(1, weight=1)
@@ -71,8 +90,9 @@ class DATGuiApp(*_DND_MIXIN):
             self,
             on_ticket_change=self._on_ticket_change,
             on_topic_change=self._on_topic_change,
+            on_author_change=self._on_author_change,
+            on_approved_by_change=self._on_approved_by_change,
             on_toggle_change=self._on_toggle_change,
-            on_overview_change=self._on_overview_change,
             on_impact_areas_change=self._on_impact_areas_change,
             on_key_points_change=self._on_key_points_change,
             on_test_cases_change=self._on_test_cases_change,
@@ -88,6 +108,15 @@ class DATGuiApp(*_DND_MIXIN):
 
         self.control_panel.set_ticket_id(self.state_model.ticket_id)
         self.control_panel.set_topic(self.state_model.topic)
+        self.control_panel.set_author(self.state_model.author)
+        self.control_panel.set_approved_by(self.state_model.approved_by)
+
+        if image_paths:
+            screenshots = self.container.screenshot_service.process_local_images(image_paths)
+            for shot in screenshots:
+                self.state_model.add_screenshot(shot)
+            self._sync_screenshot_list()
+
         self._refresh_preview()
         self._load_summary_async()
 
@@ -105,8 +134,12 @@ class DATGuiApp(*_DND_MIXIN):
         self.state_model.set_toggle(key, value)
         self._refresh_preview()
 
-    def _on_overview_change(self, text: str):
-        self.state_model.set_overview(text)
+    def _on_author_change(self, value: str):
+        self.state_model.author = value
+        self._refresh_preview()
+
+    def _on_approved_by_change(self, value: str):
+        self.state_model.set_approved_by(value)
         self._refresh_preview()
 
     def _on_impact_areas_change(self, text: str):
@@ -177,7 +210,6 @@ class DATGuiApp(*_DND_MIXIN):
         if self.state_model.summary_user_edited:
             return
         self.state_model.summary = summary
-        self.control_panel.set_overview(summary.overview)
         self.control_panel.set_impact_areas_text(", ".join(summary.impact_areas))
         self.control_panel.set_key_points(summary.key_points)
         self.control_panel.set_test_cases(summary.test_cases)
@@ -206,6 +238,7 @@ class DATGuiApp(*_DND_MIXIN):
                 output_path=output_path,
                 title_override=self.state_model.title,
                 author=self.state_model.author,
+                approved_by=self.state_model.approved_by,
                 ticket_override=self.state_model.ticket_id or None,
                 output_format="docx",
                 sections=dict(self.state_model.toggles),

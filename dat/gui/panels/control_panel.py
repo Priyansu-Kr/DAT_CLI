@@ -17,8 +17,9 @@ class ControlPanel(ctk.CTkScrollableFrame):
         master,
         on_ticket_change: Callable[[str], None],
         on_topic_change: Callable[[str], None],
+        on_author_change: Callable[[str], None],
+        on_approved_by_change: Callable[[str], None],
         on_toggle_change: Callable[[str, bool], None],
-        on_overview_change: Callable[[str], None],
         on_impact_areas_change: Callable[[str], None],
         on_key_points_change: Callable[[List[str]], None],
         on_test_cases_change: Callable[[List[str]], None],
@@ -37,13 +38,15 @@ class ControlPanel(ctk.CTkScrollableFrame):
         )
         self.on_ticket_change = on_ticket_change
         self.on_topic_change = on_topic_change
+        self.on_author_change = on_author_change
+        self.on_approved_by_change = on_approved_by_change
         self.on_toggle_change = on_toggle_change
-        self.on_overview_change = on_overview_change
         self.on_impact_areas_change = on_impact_areas_change
 
         self._build_header()
         self._build_ticket_field()
         self._build_topic_field()
+        self._build_task_detail_fields()
         self._build_toggles()
         self._build_ai_content(on_key_points_change, on_test_cases_change)
         self._build_dropzone(on_files_added, on_file_removed, on_reorder, on_assign_test_case)
@@ -91,6 +94,31 @@ class ControlPanel(ctk.CTkScrollableFrame):
     def _on_topic_key_release(self, _event=None):
         self.on_topic_change(self.topic_text.get("1.0", "end-1c"))
 
+    def _build_task_detail_fields(self):
+        self._section_label("Created By", icon="🖊").pack(
+            fill="x", padx=theme.PADDING_MD, pady=(theme.PADDING_SM, 4)
+        )
+        self.author_var = tk.StringVar()
+        self.author_var.trace_add("write", lambda *_: self.on_author_change(self.author_var.get()))
+        self.author_entry = ctk.CTkEntry(
+            self, textvariable=self.author_var, placeholder_text="e.g. Jane Doe",
+            fg_color=theme.SURFACE_GREY_LIGHT, border_color=theme.BORDER_MUTED,
+            text_color=theme.TEXT_PRIMARY, corner_radius=theme.CORNER_RADIUS,
+        )
+        self.author_entry.pack(fill="x", padx=theme.PADDING_MD, pady=(0, theme.PADDING_SM))
+
+        self._section_label("Approved By", icon="✅").pack(
+            fill="x", padx=theme.PADDING_MD, pady=(theme.PADDING_SM, 4)
+        )
+        self.approved_by_var = tk.StringVar()
+        self.approved_by_var.trace_add("write", lambda *_: self.on_approved_by_change(self.approved_by_var.get()))
+        self.approved_by_entry = ctk.CTkEntry(
+            self, textvariable=self.approved_by_var, placeholder_text="e.g. Reviewer Name",
+            fg_color=theme.SURFACE_GREY_LIGHT, border_color=theme.BORDER_MUTED,
+            text_color=theme.TEXT_PRIMARY, corner_radius=theme.CORNER_RADIUS,
+        )
+        self.approved_by_entry.pack(fill="x", padx=theme.PADDING_MD, pady=(0, theme.PADDING_SM))
+
     def _build_toggles(self):
         self._section_label("Document Structure").pack(
             fill="x", padx=theme.PADDING_MD, pady=(theme.PADDING_MD, 4)
@@ -116,19 +144,6 @@ class ControlPanel(ctk.CTkScrollableFrame):
         self._section_label("AI Generated Content", icon="✨").pack(
             fill="x", padx=theme.PADDING_MD, pady=(theme.PADDING_MD, 4)
         )
-
-        ctk.CTkLabel(
-            self, text="Overview", anchor="w", text_color=theme.TEXT_SECONDARY,
-            font=(theme.FONT_INTERFACE_FAMILY, theme.FONT_SIZE_LABEL),
-        ).pack(fill="x", padx=theme.PADDING_MD, pady=(4, 2))
-        self.overview_text = ctk.CTkTextbox(
-            self, height=60, fg_color=theme.SURFACE_GREY_LIGHT,
-            border_color=theme.BORDER_MUTED, border_width=1,
-            text_color=theme.TEXT_PRIMARY, corner_radius=theme.CORNER_RADIUS,
-            wrap="word",
-        )
-        self.overview_text.pack(fill="x", padx=theme.PADDING_MD, pady=(0, theme.PADDING_SM))
-        self.overview_text.bind("<KeyRelease>", self._on_overview_key_release)
 
         ctk.CTkLabel(
             self, text="Affected Module(s)", anchor="w", text_color=theme.TEXT_SECONDARY,
@@ -162,9 +177,6 @@ class ControlPanel(ctk.CTkScrollableFrame):
         )
         self.test_cases_field.pack(fill="x", padx=theme.PADDING_MD, pady=(0, theme.PADDING_MD))
 
-    def _on_overview_key_release(self, _event=None):
-        self.on_overview_change(self.overview_text.get("1.0", "end-1c"))
-
     def _on_impact_areas_key_release(self, _event=None):
         self.on_impact_areas_change(self.impact_areas_entry.get())
 
@@ -193,9 +205,11 @@ class ControlPanel(ctk.CTkScrollableFrame):
     def set_toggle(self, key: str, value: bool):
         self.toggle_vars[key].set(value)
 
-    def set_overview(self, value: str):
-        self.overview_text.delete("1.0", "end")
-        self.overview_text.insert("1.0", value)
+    def set_author(self, value: str):
+        self.author_var.set(value)
+
+    def set_approved_by(self, value: str):
+        self.approved_by_var.set(value)
 
     def set_impact_areas_text(self, value: str):
         self.impact_areas_entry.delete(0, "end")

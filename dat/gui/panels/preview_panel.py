@@ -91,14 +91,6 @@ class PreviewPanel(ctk.CTkFrame):
         self._heading(block.heading or "Task Detail")
         self._build_table(block.table_rows, col_weights=(1, 2))
 
-    def _render_ai_summary(self, block: PreviewBlock):
-        self._heading(block.heading or "AI Summary")
-        lbl = tk.Label(
-            self.page, text=block.text or "", bg=PAGE_BG, fg=PAGE_TEXT,
-            font=theme.document_font_tuple(), anchor="w", justify="left", wraplength=560,
-        )
-        lbl.pack(fill="x", padx=theme.PADDING_MD, pady=(0, theme.PADDING_SM))
-
     def _render_changes_done(self, block: PreviewBlock):
         self._heading(block.heading or "Changes Done")
         if block.text:

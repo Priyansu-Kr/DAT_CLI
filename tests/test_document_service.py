@@ -59,6 +59,7 @@ class TestDocumentService(unittest.TestCase):
                 output_path=out_docx,
                 title_override="Manual Edits Doc",
                 author="QA",
+                approved_by="Reviewer X",
                 ticket_override="QA-1",
                 output_format="docx",
                 summary_override=summary,
@@ -67,9 +68,11 @@ class TestDocumentService(unittest.TestCase):
 
             document = docx.Document(result_path)
             text_content = "\n".join([p.text for p in document.paragraphs])
-            self.assertIn("Hand-written overview.", text_content)
             self.assertIn("Manually added point", text_content)
             self.assertIn("Manually written test case", text_content)
+
+            table_cells = [c.text for t in document.tables for r in t.rows for c in r.cells]
+            self.assertIn("Reviewer X", table_cells)
 
 if __name__ == "__main__":
     unittest.main()

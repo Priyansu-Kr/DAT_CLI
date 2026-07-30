@@ -52,10 +52,10 @@ class TestGuiState(unittest.TestCase):
         kinds = [b.kind for b in blocks]
         self.assertEqual(
             kinds,
-            ["title", "metadata_table", "ai_summary", "changes_done", "test_cases_table", "screenshots"],
+            ["title", "metadata_table", "changes_done", "test_cases_table", "screenshots"],
         )
         self.assertEqual(blocks[0].text, "PAY-500 Payment Gateway Integration")
-        self.assertEqual(blocks[4].table_rows[0], ["1.", "Verify checkout completes", "Success"])
+        self.assertEqual(blocks[3].table_rows[0], ["1.", "Verify checkout completes", "Success"])
 
     def test_build_preview_content_respects_toggles_off(self):
         state = GuiState(ticket_id="X-1", topic="Topic")
@@ -78,9 +78,14 @@ class TestGuiState(unittest.TestCase):
         state = GuiState()
         self.assertFalse(state.summary_user_edited)
 
-        state.set_overview("Manually written overview.")
+        state.set_key_points(["Manually written point."])
         self.assertTrue(state.summary_user_edited)
-        self.assertEqual(state.summary.overview, "Manually written overview.")
+        self.assertEqual(state.summary.key_points, ["Manually written point."])
+
+    def test_set_approved_by(self):
+        state = GuiState()
+        state.set_approved_by("Reviewer Name")
+        self.assertEqual(state.approved_by, "Reviewer Name")
 
     def test_set_impact_areas_text_parses_csv(self):
         state = GuiState()

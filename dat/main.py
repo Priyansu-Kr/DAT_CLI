@@ -14,7 +14,6 @@ def main():
 
     if not args.command:
         print_banner()
-        print("Run 'dat --help' to view available commands.\n")
         sys.exit(ExitCode.SUCCESS)
 
     cmd_map = {

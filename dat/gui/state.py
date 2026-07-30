@@ -15,7 +15,6 @@ from dat.renderers.screenshot_grouping import group_screenshots_by_test_case
 TOGGLE_ORDER: List[str] = [
     "header",
     "metadata_table",
-    "ai_summary",
     "changes_done",
     "test_cases_table",
     "screenshots",
@@ -24,7 +23,6 @@ TOGGLE_ORDER: List[str] = [
 TOGGLE_LABELS: Dict[str, str] = {
     "header": "Header",
     "metadata_table": "Metadata Table",
-    "ai_summary": "AI Summary",
     "changes_done": "Changes Done",
     "test_cases_table": "Test Cases Table",
     "screenshots": "Screenshots",
@@ -36,6 +34,7 @@ class GuiState:
     ticket_id: str = ""
     topic: str = ""
     author: str = "Developer"
+    approved_by: str = ""
     toggles: Dict[str, bool] = field(default_factory=lambda: dict(DEFAULT_SECTIONS))
     screenshots: List[ScreenshotInfo] = field(default_factory=list)
     summary: ChangeSummary = field(default_factory=lambda: ChangeSummary(overview=""))
@@ -75,11 +74,10 @@ class GuiState:
                 s.test_case_index = index
                 break
 
-    # --- Editable AI-generated content ---------------------------------
+    def set_approved_by(self, value: str) -> None:
+        self.approved_by = value
 
-    def set_overview(self, text: str) -> None:
-        self.summary.overview = text
-        self.summary_user_edited = True
+    # --- Editable AI-generated content ---------------------------------
 
     def set_impact_areas_text(self, text: str) -> None:
         self.summary.impact_areas = [t.strip() for t in text.split(",") if t.strip()]
@@ -146,15 +144,8 @@ def build_preview_content(state: GuiState) -> List[PreviewBlock]:
                 ["Short Description", state.topic or ""],
                 ["Document Date", datetime.now().strftime("%d-%B-%Y")],
                 ["Created By", state.author or ""],
-                ["Approved By", ""],
+                ["Approved By", state.approved_by or ""],
             ],
-        ))
-
-    if toggles.get("ai_summary", True) and summary.overview:
-        blocks.append(PreviewBlock(
-            kind="ai_summary",
-            heading="AI Summary",
-            text=summary.overview,
         ))
 
     if toggles.get("changes_done", True):

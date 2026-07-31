@@ -1,148 +1,519 @@
+"""DAT MCP (Model Context Protocol) server.
+
+Exposes the same DAT capabilities available through the `dat` CLI -
+git-aware documentation generation, ADB screenshot capture, environment
+diagnostics, and configuration inspection - as MCP tools over a stdio
+JSON-RPC 2.0 transport, so any MCP-compatible AI client/agent (Claude
+Desktop, Claude Code, Cursor, etc.) can drive DAT directly.
+
+Implemented directly against the wire protocol (JSON-RPC 2.0 framed as
+newline-delimited JSON over stdio) rather than the official MCP SDK, to
+keep DAT's dependency footprint minimal - the project already avoids
+optional/heavy dependencies elsewhere (see setup.sh/pyproject.toml).
+
+Protocol notes:
+  - stdout is the transport channel. Nothing may ever be written there
+    except JSON-RPC messages - all logs/diagnostics go to stderr, and tool
+    execution runs with stdout redirected to a buffer so a misbehaving
+    dependency calling print() can't corrupt the stream.
+  - Requests (have an "id") always get a response. Notifications (no "id")
+    never get one, even on error, per the JSON-RPC 2.0 spec.
+  - Tool execution failures are reported as a normal tools/call *result*
+    with isError: true (so the calling model can see and react to the
+    failure text) - top-level JSON-RPC `error` objects are reserved for
+    protocol-level problems (bad JSON, unknown method, invalid params).
+"""
+import contextlib
+import io
 import json
+import logging
+import os
 import sys
-from typing import Dict, Any, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
 from dat.utils.container import Container
 
+logger = logging.getLogger("dat.mcp")
+
+# MCP protocol versions this server understands, most-recent first. If the
+# client requests one we support we echo it back; otherwise we fall back to
+# our latest, per the MCP version-negotiation rule.
+SUPPORTED_PROTOCOL_VERSIONS: Tuple[str, ...] = ("2025-06-18", "2025-03-26", "2024-11-05")
+LATEST_PROTOCOL_VERSION = SUPPORTED_PROTOCOL_VERSIONS[0]
+
+SERVER_NAME = "dat-mcp-server"
+SERVER_INSTRUCTIONS = (
+    "DAT (Developer Automation Toolkit) exposes git-aware PR/feature "
+    "documentation generation, Android ADB screenshot capture, and "
+    "environment diagnostics as tools. Call 'get_git_summary' to see the "
+    "current repo's branch/ticket/diff context, then 'generate_document' "
+    "to produce a DOCX or Markdown document from it. Use 'run_doctor' if "
+    "a tool call fails with a missing-dependency error."
+)
+
+
+def _resolve_server_version() -> str:
+    try:
+        from importlib.metadata import PackageNotFoundError, version
+        try:
+            return version("developer-automation-toolkit")
+        except PackageNotFoundError:
+            return "0.1.0"
+    except ImportError:  # pragma: no cover - importlib.metadata ships with Python 3.8+
+        return "0.1.0"
+
+
+SERVER_VERSION = _resolve_server_version()
+
+_JSON_SCHEMA_TYPES: Dict[str, Any] = {
+    "string": str,
+    "boolean": bool,
+    "integer": int,
+    "number": (int, float),
+    "array": list,
+    "object": dict,
+}
+
+
+def configure_logging(level: str = "WARNING") -> None:
+    """Configure stderr-only logging for the MCP server process.
+
+    stdout is the JSON-RPC transport - nothing but protocol messages may
+    ever be written there, so every diagnostic must go to stderr instead.
+    """
+    logging.basicConfig(
+        level=getattr(logging, str(level).upper(), logging.WARNING),
+        format="%(asctime)s [%(levelname)s] dat.mcp: %(message)s",
+        stream=sys.stderr,
+    )
+
+
+class MCPProtocolError(Exception):
+    """A JSON-RPC/MCP protocol-level failure (bad method, bad params, etc.).
+
+    Distinct from a tool raising during execution: that's reported inside
+    a normal tools/call result with isError=true, not as one of these.
+    """
+
+    def __init__(self, code: int, message: str, data: Any = None):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.data = data
+
+
+def _validate_arguments(schema: Dict[str, Any], arguments: Dict[str, Any]) -> Optional[str]:
+    """Best-effort validation of `arguments` against a tool's JSON inputSchema.
+
+    Checks required-field presence, primitive type, and enum membership.
+    Unknown extra fields are tolerated for forward compatibility. Returns a
+    human-readable error string, or None if the arguments are acceptable.
+    """
+    properties: Dict[str, Any] = schema.get("properties", {})
+
+    for required_field in schema.get("required", []):
+        if arguments.get(required_field) is None:
+            return f"missing required field '{required_field}'"
+
+    for key, value in arguments.items():
+        prop_schema = properties.get(key)
+        if prop_schema is None or value is None:
+            continue
+
+        expected_type = prop_schema.get("type")
+        py_type = _JSON_SCHEMA_TYPES.get(expected_type)
+        if py_type is not None:
+            # bool is a subclass of int in Python - don't let a stray
+            # true/false silently pass an "integer"/"number" check.
+            if expected_type in ("integer", "number") and isinstance(value, bool):
+                return f"field '{key}' must be of type '{expected_type}', got boolean"
+            if not isinstance(value, py_type):
+                return f"field '{key}' must be of type '{expected_type}', got {type(value).__name__}"
+
+        enum_values = prop_schema.get("enum")
+        if enum_values is not None and value not in enum_values:
+            return f"field '{key}' must be one of {enum_values!r}, got {value!r}"
+
+    return None
+
+
 class DATMCPServer:
-    """
-    MCP (Model Context Protocol) Server for Developer Automation Toolkit (DAT_CLI).
-    Exposes DAT services as standard MCP tools over stdio JSON-RPC.
-    """
+    """MCP server exposing DAT services as tools over stdio JSON-RPC 2.0."""
+
     def __init__(self, container: Optional[Container] = None):
         self.container = container or Container.get_instance()
-        self.tools = {
-            "generate_document": self._tool_generate_document,
-            "take_screenshot": self._tool_take_screenshot,
-            "get_git_summary": self._tool_get_git_summary,
-            "run_doctor": self._tool_run_doctor,
-        }
+        self._initialized = False
 
-    def list_tools(self) -> List[Dict[str, Any]]:
-        return [
+        tool_specs: Tuple[Dict[str, Any], ...] = (
             {
                 "name": "generate_document",
-                "description": "Generates DOCX or Markdown PR/feature documentation from git branch diffs and screenshots.",
+                "description": (
+                    "Generates DOCX or Markdown PR/feature documentation from the "
+                    "current git branch's diff, commit history, and screenshots. "
+                    "Title/ticket/author are inferred from the branch name unless "
+                    "overridden."
+                ),
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "output_path": {"type": "string", "default": "doc_output.docx"},
-                        "title": {"type": "string", "description": "Optional title override"},
-                        "images": {"type": "array", "items": {"type": "string"}, "description": "Local screenshot paths"},
-                        "capture_adb": {"type": "boolean", "default": False, "description": "Capture Android screen via ADB"},
-                        "output_format": {"type": "string", "enum": ["docx", "md"], "default": "docx"}
-                    }
-                }
+                        "output_path": {
+                            "type": "string",
+                            "description": "Destination file path. Defaults to '<title>.<format>' in the current directory.",
+                        },
+                        "title": {"type": "string", "description": "Override the inferred document title."},
+                        "ticket": {"type": "string", "description": "Override the inferred ticket/issue ID (e.g. JIRA-1042)."},
+                        "author": {"type": "string", "description": "Override the document author name."},
+                        "approved_by": {"type": "string", "description": "Name of the approver for the 'Approved By' field."},
+                        "images": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Local screenshot file paths to embed, in order.",
+                        },
+                        "capture_adb": {
+                            "type": "boolean",
+                            "default": False,
+                            "description": "Capture an additional screenshot from a connected Android device/emulator via ADB.",
+                        },
+                        "output_format": {
+                            "type": "string",
+                            "enum": ["docx", "md"],
+                            "default": "docx",
+                            "description": "Output document format.",
+                        },
+                        "repo_path": {
+                            "type": "string",
+                            "description": "Absolute path to the target git repository. Defaults to the server process's current working directory - set this when the client's cwd differs from the repo being documented.",
+                        },
+                    },
+                },
+                "handler_name": "_tool_generate_document",
             },
             {
                 "name": "take_screenshot",
-                "description": "Captures screenshot from connected Android device or emulator via ADB.",
+                "description": "Captures a screenshot from a connected Android device or emulator via ADB.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "output_path": {"type": "string", "default": "screenshot.png"},
-                        "device_id": {"type": "string"}
-                    }
-                }
+                        "output_path": {
+                            "type": "string",
+                            "description": "Destination PNG path. Defaults to a temp-directory file.",
+                        },
+                        "device_id": {
+                            "type": "string",
+                            "description": "Specific ADB device serial. Defaults to the first connected device.",
+                        },
+                    },
+                },
+                "handler_name": "_tool_take_screenshot",
             },
             {
                 "name": "get_git_summary",
-                "description": "Retrieves Git branch, ticket key, changed files, and diff summary for active repository.",
-                "inputSchema": {"type": "object", "properties": {}}
+                "description": (
+                    "Retrieves the current branch name, inferred title/ticket ID, "
+                    "changed files, and recent commit history for a git repository. "
+                    "Useful as context before calling generate_document."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "repo_path": {
+                            "type": "string",
+                            "description": "Absolute path to the git repository. Defaults to the server process's current working directory.",
+                        },
+                        "max_changed_files": {
+                            "type": "integer",
+                            "default": 20,
+                            "description": "Maximum number of changed file paths to include.",
+                        },
+                    },
+                },
+                "handler_name": "_tool_get_git_summary",
             },
             {
                 "name": "run_doctor",
-                "description": "Runs environment diagnostics on DAT binary dependencies (git, adb, python-docx).",
-                "inputSchema": {"type": "object", "properties": {}}
-            }
+                "description": "Runs environment diagnostics on DAT's binary/package dependencies (git, adb, python-docx, PyYAML).",
+                "inputSchema": {"type": "object", "properties": {}},
+                "handler_name": "_tool_run_doctor",
+            },
+            {
+                "name": "get_config",
+                "description": "Reads DAT's persisted configuration (author defaults, output directory, AI provider). Secrets are never returned, only whether they're set.",
+                "inputSchema": {"type": "object", "properties": {}},
+                "handler_name": "_tool_get_config",
+            },
+        )
+
+        self._tools: Dict[str, Dict[str, Any]] = {
+            spec["name"]: {**spec, "handler": getattr(self, spec["handler_name"])}
+            for spec in tool_specs
+        }
+
+        self._method_handlers: Dict[str, Callable[[Dict[str, Any]], Optional[Dict[str, Any]]]] = {
+            "initialize": self._handle_initialize,
+            "ping": self._handle_ping,
+            "tools/list": self._handle_tools_list,
+            "tools/call": self._handle_tools_call,
+            "notifications/initialized": self._handle_initialized_notification,
+            "notifications/cancelled": self._handle_cancelled_notification,
+        }
+
+    # --- MCP surface -------------------------------------------------------
+
+    def list_tools(self) -> List[Dict[str, Any]]:
+        return [
+            {"name": tool["name"], "description": tool["description"], "inputSchema": tool["inputSchema"]}
+            for tool in self._tools.values()
         ]
 
-    def handle_request(self, request_json: str) -> str:
-        try:
-            req = json.loads(request_json)
-            req_id = req.get("id")
-            method = req.get("method")
-            params = req.get("params", {})
+    # --- JSON-RPC message handling ------------------------------------------
 
-            if method == "tools/list":
-                return json.dumps({
-                    "jsonrpc": "2.0",
-                    "id": req_id,
-                    "result": {"tools": self.list_tools()}
-                })
-            elif method == "tools/call":
-                tool_name = params.get("name")
-                arguments = params.get("arguments", {})
-                handler = self.tools.get(tool_name)
-                if not handler:
-                    return json.dumps({
-                        "jsonrpc": "2.0",
-                        "id": req_id,
-                        "error": {"code": -32601, "message": f"Tool '{tool_name}' not found"}
-                    })
-                
-                result_data = handler(arguments)
-                return json.dumps({
-                    "jsonrpc": "2.0",
-                    "id": req_id,
-                    "result": {"content": [{"type": "text", "text": json.dumps(result_data, indent=2)}]}
-                })
-            else:
-                return json.dumps({
-                    "jsonrpc": "2.0",
-                    "id": req_id,
-                    "error": {"code": -32601, "message": f"Method '{method}' unsupported"}
-                })
-        except Exception as e:
-            return json.dumps({
-                "jsonrpc": "2.0",
-                "id": None,
-                "error": {"code": -32603, "message": str(e)}
-            })
+    def handle_request(self, request_json: str) -> Optional[str]:
+        """Process one JSON-RPC message. Returns the response to write, or
+        None if nothing should be written (the message was a notification).
+        """
+        try:
+            message = json.loads(request_json)
+        except json.JSONDecodeError as exc:
+            return self._error_response(None, -32700, f"Parse error: {exc}")
+
+        if not isinstance(message, dict):
+            return self._error_response(None, -32600, "Invalid Request: expected a JSON object")
+
+        if message.get("jsonrpc") != "2.0":
+            return self._error_response(message.get("id"), -32600, "Invalid Request: 'jsonrpc' must be \"2.0\"")
+
+        method = message.get("method")
+        if not isinstance(method, str) or not method:
+            return self._error_response(message.get("id"), -32600, "Invalid Request: 'method' must be a non-empty string")
+
+        is_notification = "id" not in message
+        req_id = message.get("id")
+
+        params = message.get("params", {})
+        if params is None:
+            params = {}
+        if not isinstance(params, dict):
+            return None if is_notification else self._error_response(req_id, -32602, "Invalid params: 'params' must be an object")
+
+        handler = self._method_handlers.get(method)
+        if handler is None:
+            return None if is_notification else self._error_response(req_id, -32601, f"Method not found: '{method}'")
+
+        try:
+            result = handler(params)
+        except MCPProtocolError as exc:
+            logger.debug("Protocol error handling '%s': %s", method, exc.message)
+            return None if is_notification else self._error_response(req_id, exc.code, exc.message, exc.data)
+        except Exception as exc:
+            # Last-resort safety net. Tool-execution errors are already
+            # caught and reported as isError results inside
+            # _handle_tools_call, so reaching here means a genuine bug in
+            # the server's protocol layer, not a tool failure.
+            logger.exception("Unhandled exception handling method '%s'", method)
+            return None if is_notification else self._error_response(req_id, -32603, f"Internal error: {exc}")
+
+        if is_notification:
+            return None
+        return self._success_response(req_id, result or {})
+
+    def _success_response(self, req_id: Any, result: Dict[str, Any]) -> str:
+        return json.dumps({"jsonrpc": "2.0", "id": req_id, "result": result})
+
+    def _error_response(self, req_id: Any, code: int, message: str, data: Any = None) -> str:
+        error: Dict[str, Any] = {"code": code, "message": message}
+        if data is not None:
+            error["data"] = data
+        return json.dumps({"jsonrpc": "2.0", "id": req_id, "error": error})
+
+    def _require_initialized(self) -> None:
+        if not self._initialized:
+            raise MCPProtocolError(-32002, "Server not initialized: call 'initialize' before other requests")
+
+    # --- Method handlers -----------------------------------------------------
+
+    def _handle_initialize(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        requested_version = params.get("protocolVersion")
+        negotiated_version = requested_version if requested_version in SUPPORTED_PROTOCOL_VERSIONS else LATEST_PROTOCOL_VERSION
+        self._initialized = True
+        return {
+            "protocolVersion": negotiated_version,
+            "capabilities": {"tools": {"listChanged": False}},
+            "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
+            "instructions": SERVER_INSTRUCTIONS,
+        }
+
+    def _handle_ping(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        return {}
+
+    def _handle_initialized_notification(self, params: Dict[str, Any]) -> None:
+        logger.debug("Client acknowledged initialization")
+        return None
+
+    def _handle_cancelled_notification(self, params: Dict[str, Any]) -> None:
+        logger.info("Client cancelled request id=%s reason=%s", params.get("requestId"), params.get("reason"))
+        return None
+
+    def _handle_tools_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        self._require_initialized()
+        return {"tools": self.list_tools()}
+
+    def _handle_tools_call(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        self._require_initialized()
+
+        tool_name = params.get("name")
+        if not isinstance(tool_name, str) or not tool_name:
+            raise MCPProtocolError(-32602, "Invalid params: 'name' is required and must be a string")
+
+        tool = self._tools.get(tool_name)
+        if tool is None:
+            raise MCPProtocolError(-32602, f"Unknown tool: '{tool_name}'")
+
+        arguments = params.get("arguments", {})
+        if arguments is None:
+            arguments = {}
+        if not isinstance(arguments, dict):
+            raise MCPProtocolError(-32602, "Invalid params: 'arguments' must be an object")
+
+        validation_error = _validate_arguments(tool["inputSchema"], arguments)
+        if validation_error:
+            raise MCPProtocolError(-32602, f"Invalid arguments for tool '{tool_name}': {validation_error}")
+
+        return self._invoke_tool(tool_name, tool["handler"], arguments)
+
+    def _invoke_tool(self, tool_name: str, handler: Callable[[Dict[str, Any]], Any], arguments: Dict[str, Any]) -> Dict[str, Any]:
+        # stdout is the JSON-RPC transport. Some underlying services print()
+        # warnings (e.g. git/AI fallback notices) - redirect stdout to a
+        # buffer for the duration of the call so a stray print can never
+        # corrupt the wire protocol, and surface it as a log instead.
+        stdout_buffer = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(stdout_buffer):
+                data = handler(arguments)
+        except Exception as exc:
+            logger.exception("Tool '%s' raised during execution", tool_name)
+            return {"content": [{"type": "text", "text": f"Error executing tool '{tool_name}': {exc}"}], "isError": True}
+        finally:
+            leaked = stdout_buffer.getvalue()
+            if leaked:
+                logger.warning("Tool '%s' wrote to stdout during execution (suppressed): %r", tool_name, leaked[:500])
+
+        return {"content": [{"type": "text", "text": json.dumps(data, indent=2, default=str)}], "isError": False}
+
+    # --- Tool implementations ------------------------------------------------
 
     def _tool_generate_document(self, args: Dict[str, Any]) -> Dict[str, Any]:
         output_file = self.container.document_service.generate_documentation(
-            output_path=args.get("output_path", "doc_output.docx"),
+            output_path=args.get("output_path"),
             title_override=args.get("title"),
+            author=args.get("author") or self.container.config.author_name,
+            approved_by=args.get("approved_by") or "",
+            ticket_override=args.get("ticket"),
             image_paths=args.get("images"),
-            capture_adb=args.get("capture_adb", False),
-            output_format=args.get("output_format", "docx")
+            capture_adb=bool(args.get("capture_adb", False)),
+            output_format=args.get("output_format", "docx"),
+            cwd=args.get("repo_path"),
         )
         return {"status": "success", "file_path": output_file}
 
     def _tool_take_screenshot(self, args: Dict[str, Any]) -> Dict[str, Any]:
         shot_info = self.container.screenshot_service.capture_adb_screenshot(
-            output_path=args.get("output_path", "screenshot.png"),
-            device_id=args.get("device_id")
+            output_path=args.get("output_path"),
+            device_id=args.get("device_id"),
         )
         return {"status": "success", "file_path": shot_info.file_path}
 
     def _tool_get_git_summary(self, args: Dict[str, Any]) -> Dict[str, Any]:
-        git_info = self.container.git_service.get_git_info()
+        max_files = int(args.get("max_changed_files") or 20)
+        git_info = self.container.git_service.get_git_info(cwd=args.get("repo_path"))
         return {
+            "repo_name": git_info.repo_name,
             "branch_name": git_info.branch_name,
             "inferred_title": git_info.inferred_title,
             "ticket_id": git_info.ticket_id,
-            "repo_name": git_info.repo_name,
+            "author_name": git_info.author_name,
             "changed_files_count": len(git_info.changed_files),
-            "changed_files": git_info.changed_files[:10],
+            "changed_files": git_info.changed_files[:max_files],
+            "recent_commits": [
+                {"hash": c.hash, "author": c.author, "date": c.date, "message": c.message}
+                for c in git_info.recent_commits
+            ],
         }
 
     def _tool_run_doctor(self, args: Dict[str, Any]) -> Dict[str, Any]:
-        return {
+        diagnostics: Dict[str, Any] = {
             "is_git_repo": self.container.git_adapter.is_git_repo(),
+            "git_path": self.container.config.git_path,
             "adb_available": self.container.adb_adapter.is_adb_available(),
             "adb_devices": self.container.adb_adapter.get_devices(),
+            "adb_path": self.container.config.adb_path,
+            "ai_provider": self.container.config.ai_provider,
+            "ai_configured": bool(self.container.config.ai_api_key),
+            "config_file": self.container.configuration_service.config_file,
+        }
+        for module_name in ("docx", "yaml"):
+            try:
+                __import__(module_name)
+                diagnostics[f"{module_name}_available"] = True
+            except ImportError:
+                diagnostics[f"{module_name}_available"] = False
+        return diagnostics
+
+    def _tool_get_config(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        cfg = self.container.config
+        return {
+            "author_name": cfg.author_name,
+            "author_email": cfg.author_email,
+            "default_output_dir": cfg.default_output_dir,
+            "git_path": cfg.git_path,
+            "adb_path": cfg.adb_path,
+            "ai_provider": cfg.ai_provider,
+            "ai_api_key_configured": bool(cfg.ai_api_key),
+            "config_file": self.container.configuration_service.config_file,
         }
 
-    def run_stdio_loop(self):
-        for line in sys.stdin:
-            line = line.strip()
-            if not line:
-                continue
-            response = self.handle_request(line)
-            sys.stdout.write(response + "\n")
-            sys.stdout.flush()
+    # --- Transport -------------------------------------------------------------
+
+    def run_stdio_loop(self) -> None:
+        for stream in (sys.stdin, sys.stdout):
+            try:
+                stream.reconfigure(encoding="utf-8", newline="\n")
+            except (AttributeError, ValueError):
+                pass  # not a reconfigurable TextIOWrapper (e.g. captured in tests) - defaults are fine
+
+        logger.info("DAT MCP server listening on stdio (pid=%d)", os.getpid())
+        try:
+            for raw_line in sys.stdin:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                try:
+                    response = self.handle_request(line)
+                except Exception:
+                    logger.exception("Unrecoverable error handling a message; skipping it")
+                    continue
+                if response is not None:
+                    sys.stdout.write(response + "\n")
+                    sys.stdout.flush()
+        except (BrokenPipeError, KeyboardInterrupt):
+            pass
+        finally:
+            logger.info("DAT MCP server shutting down")
+
+
+def main(argv: Optional[List[str]] = None) -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser(prog="dat-mcp", description="DAT Model Context Protocol stdio server")
+    parser.add_argument(
+        "--log-level",
+        default=os.environ.get("DAT_MCP_LOG_LEVEL", "WARNING"),
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Logging verbosity written to stderr (stdout is reserved for JSON-RPC messages)",
+    )
+    parsed = parser.parse_args(argv)
+    configure_logging(parsed.log_level)
+    DATMCPServer().run_stdio_loop()
+
 
 if __name__ == "__main__":
-    server = DATMCPServer()
-    server.run_stdio_loop()
+    main()

@@ -29,6 +29,33 @@ from dat.services.ai_service import default_change_summary
 from dat.utils.container import Container
 
 
+def _patch_scrollable_frame_string_widget_bug() -> None:
+    """Some Linux/VM Tk builds deliver `event.widget` as the widget's string
+    path name instead of the resolved widget object during mouse-wheel
+    events. CTkScrollableFrame._check_if_valid_scroll always expects an
+    object and crashes with `AttributeError: 'str' object has no attribute
+    'master'`. Resolve the string via nametowidget() before delegating to
+    the original logic.
+    """
+    original = ctk.CTkScrollableFrame._check_if_valid_scroll
+    if getattr(original, "_dat_string_widget_patched", False):
+        return
+
+    def _check_if_valid_scroll(self, widget):
+        if isinstance(widget, str):
+            try:
+                widget = self.nametowidget(widget)
+            except KeyError:
+                return False
+        return original(self, widget)
+
+    _check_if_valid_scroll._dat_string_widget_patched = True
+    ctk.CTkScrollableFrame._check_if_valid_scroll = _check_if_valid_scroll
+
+
+_patch_scrollable_frame_string_widget_bug()
+
+
 class DATGuiApp(*_DND_MIXIN):
     def __init__(
         self,

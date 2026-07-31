@@ -36,4 +36,15 @@ def parse_args(args_list: Optional[List[str]] = None) -> argparse.Namespace:
     cfg_parser = subparsers.add_parser("config", help="View or initialize DAT configuration")
     cfg_parser.add_argument("action", nargs="?", choices=["show", "init"], default="show", help="Action to perform")
 
+    # dat mcp
+    mcp_parser = subparsers.add_parser(
+        "mcp", help="Start the DAT MCP (Model Context Protocol) stdio server for AI agent/IDE integration"
+    )
+    mcp_parser.add_argument(
+        "--log-level",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        default=None,
+        help="Server log verbosity, written to stderr only (default: WARNING, or $DAT_MCP_LOG_LEVEL)",
+    )
+
     return parser.parse_args(args_list)

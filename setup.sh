@@ -26,7 +26,6 @@ source venv/bin/activate
 echo "🛠 Installing DAT_CLI..."
 pip install --upgrade pip
 pip install -e .
-pip install requests pillow python-docx pyyaml rich
 
 # 3. Create the 'dat' command shortcut
 echo "🔗 Creating 'dat' command shortcut in $SHELL_CONFIG..."

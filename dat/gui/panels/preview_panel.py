@@ -34,9 +34,10 @@ class PreviewPanel(ctk.CTkFrame):
         self.title_label.pack(side="left", fill="x", expand=True)
 
         export_btn = ctk.CTkButton(
-            header, text="Export DOCX", width=140, height=36,
+            header, text="Export DOCX", width=160, height=38,
             fg_color=theme.ACCENT_TECH_BLUE, hover_color=theme.ACCENT_TECH_BLUE_HOVER,
             font=(theme.FONT_INTERFACE_FAMILY, theme.FONT_SIZE_LABEL, "bold"),
+            border_spacing=10,
             command=on_export,
         )
         export_btn.pack(side="right")

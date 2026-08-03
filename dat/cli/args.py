@@ -18,6 +18,16 @@ def parse_args(args_list: Optional[List[str]] = None) -> argparse.Namespace:
     doc_parser.add_argument("--approved-by", help="Name of the approver for the 'Approved By' field")
     doc_parser.add_argument("-i", "--images", nargs="*", help="Explicit image file paths to include")
     doc_parser.add_argument("-s", "--select-images", action="store_true", help="Open the interactive Preview Panel (GUI) to configure, attach screenshots via drag-and-drop, and export")
+    doc_parser.add_argument(
+        "--seed-file",
+        dest="seed_file",
+        help=(
+            "Path to a JSON file with pre-filled content (title/ticket/author/approved_by/images/summary) "
+            "to seed the Preview Panel with - implies --select-images. The file is deleted after being "
+            "read. Intended for programmatic callers (e.g. the DAT MCP server's 'open_preview' tool); not "
+            "normally passed by hand."
+        ),
+    )
     doc_parser.add_argument("--adb", action="store_true", help="Automatically capture screenshot from connected Android device via ADB")
     doc_parser.add_argument("-f", "--format", choices=["docx", "md"], default="docx", help="Output document format")
 

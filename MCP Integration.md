@@ -136,13 +136,30 @@ arguments. Use `command: "dat"`, `args: ["mcp"]`. If your client can't set a per
 
 | Tool | What it does |
 |---|---|
-| `generate_document` | Generates a DOCX or Markdown PR/feature doc from the current git branch's diff, commits, and screenshots |
+| `generate_document` | Generates a DOCX or Markdown PR/feature doc from the current git branch's diff, commits, and screenshots — headless, no GUI |
+| `open_preview` | Opens the interactive Preview Panel (GUI), pre-filled with your content, so a human can confirm it, drag-and-drop screenshots onto it, and export themselves |
 | `take_screenshot` | Captures a screenshot from a connected Android device/emulator via ADB |
 | `get_git_summary` | Returns branch name, inferred title/ticket ID, changed files, and recent commits |
 | `run_doctor` | Reports whether git/adb/python-docx/PyYAML are available and configured |
 | `get_config` | Reads DAT's persisted configuration (author defaults, output dir, AI provider) — secrets are never returned, only whether they're set |
 
+### Bring your own summary: the `summary` argument
+
+Both `generate_document` and `open_preview` accept an optional `summary` object. **You (the calling model) almost always have far more context on the actual change than DAT's own AI call over the raw diff could infer** — you've been in the conversation, you know which module changed and why. Fill this in yourself instead of leaving it to DAT:
+
+| Field | Type | Description |
+|---|---|---|
+| `overview` | string | One-paragraph summary of what changed and why |
+| `key_points` | string[] | Bullet points describing the specific changes made |
+| `impact_areas` | string[] | Modules/components/screens affected |
+| `test_recommendations` | string[] | High-level guidance on how to verify the change |
+| `test_cases` | string[] | Concrete, precise test case descriptions to verify the change |
+
+Any field you omit falls back to DAT's own AI generation for that field only. Omit `summary` entirely to let DAT generate everything itself, as before.
+
 ### `generate_document`
+
+Headless: writes the file directly and returns its path. No human sees the content before it's final — use this when you're confident in the content and no screenshot needs attaching interactively.
 
 | Argument | Type | Default | Description |
 |---|---|---|---|
@@ -152,11 +169,32 @@ arguments. Use `command: "dat"`, `args: ["mcp"]`. If your client can't set a per
 | `author` | string | configured author | Override the author name |
 | `approved_by` | string | *(empty)* | Name for the "Approved By" field |
 | `images` | string[] | *(none)* | Local screenshot paths to embed, in order |
+| `summary` | object | *(none)* | AI-authored content — see above. Omitted fields fall back to DAT's own AI generation |
 | `capture_adb` | boolean | `false` | Also capture a screenshot from a connected Android device |
 | `output_format` | `"docx"` \| `"md"` | `"docx"` | Output format |
 | `repo_path` | string | server's cwd | Absolute path to the target git repository |
 
 Example prompt: *"Generate a Markdown PR doc for the current branch and save it as `PR.md`."*
+
+### `open_preview`
+
+Opens DAT's desktop Preview Panel pre-filled with the supplied `title`/`ticket`/`author`/`summary`, so a human can visually confirm the content, drag-and-drop screenshot files onto it from anywhere on disk (no folder or naming convention required), and click Export themselves. This is the recommended flow whenever a human should see and confirm AI-authored content — or attach a screenshot — before the document is final.
+
+| Argument | Type | Default | Description |
+|---|---|---|---|
+| `title` | string | inferred from branch | Override the document title |
+| `ticket` | string | inferred from branch | Override the ticket/issue ID |
+| `author` | string | configured author | Override the author name |
+| `approved_by` | string | *(empty)* | Name for the "Approved By" field |
+| `images` | string[] | *(none)* | Local screenshot paths to pre-attach, in order — the user can still add more by drag-and-drop |
+| `summary` | object | *(none)* | AI-authored content — see above |
+| `repo_path` | string | server's cwd | Absolute path to the target git repository |
+
+**This call does not block.** It launches the Preview Panel as an independent, detached process and returns as soon as the window is up — it does not wait for the user to review, attach screenshots, or export, and its result does not include a final file path (only `{"status": "opened", "pid": <int>}`). The window keeps running after the tool call returns; the user finishes the job by clicking **Export** inside it.
+
+Requires a graphical session: a local desktop on macOS/Linux, or an X11/Wayland-forwarded display if the MCP server is running inside a VM/remote session. If none is available, the call fails immediately with a clear error (rather than hanging) — DAT watches the launched process for ~1.5s and surfaces its captured output if it exits in that window.
+
+Example prompt: *"I just added biometric login to the auth flow. Write 3 precise test cases and the affected modules, then open the Preview Panel so I can attach a screenshot and export."*
 
 ### `take_screenshot`
 
@@ -210,6 +248,14 @@ you have two options:
 - **Want to see exactly what's being called** — every tool invocation, its result, and any suppressed
   internal warnings are logged to stderr at `INFO`/`WARNING` level; nothing is ever written to stdout except
   protocol messages.
+- **`open_preview` fails with "exited immediately"** — almost always means no graphical session is reachable
+  from wherever `dat mcp` is running: a headless Linux VM/container with no `$DISPLAY`, or a missing
+  `tkinter`/`customtkinter` install. Run `run_doctor` from the same environment, or `ssh -X`/VNC into the VM
+  so a display is actually available, then retry.
+- **`open_preview` returned "opened" but I don't see a window** — on some window managers a newly launched
+  window can open behind existing ones or on another virtual desktop/Space; check your taskbar/Mission
+  Control. The tool call itself only confirms the *process* survived its first ~1.5s, not that the window is
+  focused.
 
 ---
 
@@ -231,3 +277,18 @@ you have two options:
 - **Local trust model**: like any MCP stdio server, `dat mcp` runs as a local subprocess with your user's own
   permissions and file access — it doesn't add a network attack surface, but it can read/write anywhere you
   can.
+- **`open_preview` is non-blocking by design**: the MCP server processes one JSON-RPC message at a time on a
+  single stdio loop, so a tool call cannot sit and wait for a human to finish interacting with a GUI without
+  freezing every other tool call (and likely tripping the client's own tool-call timeout). Instead,
+  `open_preview` launches `python -m dat.main generate-doc -s --seed-file <path>` as a **detached** child
+  process — `start_new_session=True` on macOS/Linux, `CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS` on Windows
+  — that outlives the tool call, and returns immediately once a short (~1.5s) crash-detection window has
+  passed. The child is launched via `sys.executable` (the same interpreter already running the MCP server),
+  not by resolving `dat` on `PATH` — `setup.sh` wires `dat` up as a shell **alias**, which a non-interactive
+  subprocess never inherits, so re-using the current interpreter is what makes this reliable across macOS,
+  Linux, and a VM alike.
+- **Seed file handoff**: the `title`/`ticket`/`author`/`summary`/`images` you pass to `open_preview` are
+  written to a one-shot JSON file in the OS temp directory and handed to the `generate-doc` subprocess via
+  `--seed-file`; that process deletes the file as soon as it's read (or immediately if it's malformed —
+  the Preview Panel still opens with defaults rather than failing outright). Nothing is left behind on disk
+  once the panel has loaded.

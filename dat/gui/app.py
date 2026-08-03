@@ -24,6 +24,7 @@ from dat.gui import theme
 from dat.gui.panels.control_panel import ControlPanel
 from dat.gui.panels.preview_panel import PreviewPanel
 from dat.gui.state import GuiState, build_preview_content
+from dat.models.doc_request import ChangeSummary
 from dat.models.git_info import GitInfo
 from dat.services.ai_service import default_change_summary
 from dat.utils.container import Container
@@ -65,6 +66,7 @@ class DATGuiApp(*_DND_MIXIN):
         author_override: Optional[str] = None,
         approved_by_override: Optional[str] = None,
         image_paths: Optional[List[str]] = None,
+        summary_override: Optional[ChangeSummary] = None,
     ):
         super().__init__()
         if TkinterDnD is not None:
@@ -144,8 +146,18 @@ class DATGuiApp(*_DND_MIXIN):
                 self.state_model.add_screenshot(shot)
             self._sync_screenshot_list()
 
-        self._refresh_preview()
-        self._load_summary_async()
+        if summary_override is not None:
+            # Content already came from an LLM with far more context on the
+            # actual change than a fresh AI call could infer from the diff
+            # alone - apply it directly and lock it so the (otherwise
+            # automatic) background AI call below never fires and can't
+            # clobber it. This also avoids burning an AI-provider call/quota
+            # for content we're about to throw away anyway.
+            self._apply_summary(summary_override)
+            self.state_model.summary_user_edited = True
+        else:
+            self._refresh_preview()
+            self._load_summary_async()
 
     # --- Reactive wiring -------------------------------------------------
 

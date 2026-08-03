@@ -33,6 +33,14 @@ class TestCLIArgs(unittest.TestCase):
         ])
         self.assertEqual(args.images, ["screen1.png", "screen2.png"])
 
+    def test_generate_doc_seed_file_defaults_to_none(self):
+        args = parse_args(["generate-doc"])
+        self.assertIsNone(args.seed_file)
+
+    def test_generate_doc_seed_file_arg(self):
+        args = parse_args(["generate-doc", "--seed-file", "/tmp/seed.json"])
+        self.assertEqual(args.seed_file, "/tmp/seed.json")
+
     def test_screenshot_command(self):
         args = parse_args(["screenshot", "--output", "snap.png"])
         self.assertEqual(args.command, "screenshot")

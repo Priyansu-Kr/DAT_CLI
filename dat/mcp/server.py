@@ -28,9 +28,13 @@ import io
 import json
 import logging
 import os
+import subprocess
 import sys
+import tempfile
+import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from dat.models.doc_request import ChangeSummary
 from dat.utils.container import Container
 
 logger = logging.getLogger("dat.mcp")
@@ -46,9 +50,16 @@ SERVER_INSTRUCTIONS = (
     "DAT (Developer Automation Toolkit) exposes git-aware PR/feature "
     "documentation generation, Android ADB screenshot capture, and "
     "environment diagnostics as tools. Call 'get_git_summary' to see the "
-    "current repo's branch/ticket/diff context, then 'generate_document' "
-    "to produce a DOCX or Markdown document from it. Use 'run_doctor' if "
-    "a tool call fails with a missing-dependency error."
+    "current repo's branch/ticket/diff context. Then, since you (the "
+    "calling model) almost always have far more context on the actual "
+    "change than a fresh AI call over the raw diff could infer, write your "
+    "own 'summary' (key_points/impact_areas/test_cases) and pass it to "
+    "'generate_document' for a one-shot headless DOCX/Markdown file, or to "
+    "'open_preview' to show it to the user in DAT's GUI first so they can "
+    "confirm it, attach screenshots by drag-and-drop, and export themselves "
+    "- prefer 'open_preview' whenever a human should see the content before "
+    "it's final. Use 'run_doctor' if a tool call fails with a "
+    "missing-dependency error."
 )
 
 
@@ -73,6 +84,158 @@ _JSON_SCHEMA_TYPES: Dict[str, Any] = {
     "array": list,
     "object": dict,
 }
+
+# Shared by both 'generate_document' and 'open_preview' - this is the shape
+# an MCP client (an LLM with far more context on the actual change than a
+# fresh AI call over the raw diff could infer) should fill in itself,
+# instead of letting DAT's own AI provider guess.
+_SUMMARY_INPUT_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "description": (
+        "AI-authored content describing the change, written by the calling model itself from its own "
+        "understanding of the code/conversation - takes priority over DAT's built-in AI summary. Any "
+        "field left out falls back to DAT's own generation for that field only."
+    ),
+    "properties": {
+        "overview": {"type": "string", "description": "One-paragraph summary of what changed and why."},
+        "key_points": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Bullet points describing the specific changes made.",
+        },
+        "impact_areas": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Modules/components/screens affected by the change.",
+        },
+        "test_recommendations": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "High-level guidance on how to verify the change.",
+        },
+        "test_cases": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Concrete, precise test case descriptions to verify the change.",
+        },
+    },
+}
+
+
+def _build_change_summary(summary_args: Optional[Dict[str, Any]]) -> Optional[ChangeSummary]:
+    """Builds a ChangeSummary from the MCP 'summary' argument, or None if the
+    caller didn't supply one (or supplied an empty object) - callers should
+    treat None as "let DAT generate this itself"."""
+    if not summary_args or not isinstance(summary_args, dict):
+        return None
+    if not any(summary_args.get(k) for k in ("overview", "key_points", "impact_areas", "test_recommendations", "test_cases")):
+        return None
+    return ChangeSummary(
+        overview=summary_args.get("overview") or "",
+        key_points=list(summary_args.get("key_points") or []),
+        impact_areas=list(summary_args.get("impact_areas") or []),
+        test_recommendations=list(summary_args.get("test_recommendations") or []),
+        test_cases=list(summary_args.get("test_cases") or []),
+    )
+
+
+# How long to watch a freshly-launched Preview Panel process for an
+# immediate crash (missing Tk/customtkinter, no DISPLAY on a headless VM,
+# etc.) before declaring the launch successful. Bounded and short - long
+# enough to catch a startup crash, short enough that 'open_preview' still
+# returns promptly rather than blocking on the GUI's full lifetime.
+_PREVIEW_LAUNCH_GRACE_SECONDS = 1.5
+_PREVIEW_LAUNCH_POLL_INTERVAL = 0.1
+
+
+def _write_seed_file(payload: Dict[str, Any]) -> str:
+    """Writes a one-shot JSON handoff file for a detached 'generate-doc -s'
+    subprocess to read and delete. Uses the OS temp directory so this works
+    unmodified on macOS, Linux, and inside a VM without assuming any
+    project-local scratch folder exists."""
+    fd, path = tempfile.mkstemp(prefix="dat-preview-seed-", suffix=".json")
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(payload, f)
+    return path
+
+
+def _spawn_detached(cmd: List[str], cwd: str) -> "subprocess.Popen":
+    """Launches `cmd` as an independent background process that outlives
+    this tool call - the MCP server must return immediately rather than
+    blocking on however long the user takes to review/export in the GUI.
+
+    stdout/stderr are captured to a temp log file (not a pipe: an unread
+    pipe can deadlock a long-running child once its buffer fills) purely so
+    an immediate crash can be diagnosed by `_wait_for_early_exit` below.
+    `_wait_for_early_exit` removes the log file once the crash-detection
+    window closes; if the process is still healthy at that point the log is
+    deliberately left in the OS temp directory rather than tracked for
+    later cleanup - it's a small text file in a location the OS/user
+    session already reclaims routinely (macOS periodic /tmp cleanup,
+    systemd-tmpfiles on Linux), not worth a cleanup mechanism of its own.
+    """
+    log_fd, log_path = tempfile.mkstemp(prefix="dat-preview-launch-", suffix=".log")
+    log_file = os.fdopen(log_fd, "w", encoding="utf-8", errors="replace")
+
+    popen_kwargs: Dict[str, Any] = {}
+    if os.name == "nt":
+        # No process-group/session concept on Windows - detach via creation
+        # flags instead so this subprocess survives the MCP server's own
+        # process tree (e.g. if the IDE restarts the MCP server).
+        popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(
+            subprocess, "DETACHED_PROCESS", 0x00000008
+        )
+    else:
+        # macOS/Linux: start a new session so the child isn't in this
+        # process's session/group and isn't killed if the MCP server (or
+        # its controlling terminal) exits.
+        popen_kwargs["start_new_session"] = True
+
+    process = subprocess.Popen(
+        cmd,
+        cwd=cwd,
+        stdin=subprocess.DEVNULL,
+        stdout=log_file,
+        stderr=subprocess.STDOUT,
+        close_fds=True,
+        **popen_kwargs,
+    )
+    # The child inherits its own duplicated handle to this file at spawn
+    # time - closing our copy here doesn't affect its writes, on any
+    # platform, and avoids leaking an open file descriptor in this
+    # long-lived server process.
+    log_file.close()
+    process._dat_log_path = log_path  # type: ignore[attr-defined]
+    return process
+
+
+def _wait_for_early_exit(process: "subprocess.Popen") -> Tuple[bool, Optional[str]]:
+    """Watches `process` for up to _PREVIEW_LAUNCH_GRACE_SECONDS. Returns
+    (True, None) if it's still running (the common, successful case) or
+    (False, <captured output>) if it already exited - almost always a
+    startup crash (missing dependency, no display) worth surfacing to the
+    calling model instead of silently reporting success."""
+    log_path: Optional[str] = getattr(process, "_dat_log_path", None)
+    deadline = time.monotonic() + _PREVIEW_LAUNCH_GRACE_SECONDS
+    while time.monotonic() < deadline and process.poll() is None:
+        time.sleep(_PREVIEW_LAUNCH_POLL_INTERVAL)
+
+    if process.poll() is None:
+        return True, None
+
+    detail = f"exit code {process.returncode}"
+    if log_path and os.path.exists(log_path):
+        try:
+            with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+                tail = f.read().strip()
+            if tail:
+                detail = f"{detail}: {tail[-2000:]}"
+        except OSError:
+            pass
+        finally:
+            with contextlib.suppress(OSError):
+                os.remove(log_path)
+    return False, detail
 
 
 def configure_logging(level: str = "WARNING") -> None:
@@ -169,6 +332,7 @@ class DATMCPServer:
                             "items": {"type": "string"},
                             "description": "Local screenshot file paths to embed, in order.",
                         },
+                        "summary": _SUMMARY_INPUT_SCHEMA,
                         "capture_adb": {
                             "type": "boolean",
                             "default": False,
@@ -187,6 +351,41 @@ class DATMCPServer:
                     },
                 },
                 "handler_name": "_tool_generate_document",
+            },
+            {
+                "name": "open_preview",
+                "description": (
+                    "Opens DAT's interactive Preview Panel (a desktop GUI window), pre-filled with the "
+                    "supplied title/ticket/author/summary content, so a human can visually confirm it, "
+                    "drag-and-drop screenshots onto it from anywhere on disk (no folder/naming convention "
+                    "required), and export the final DOCX themselves. This call returns as soon as the "
+                    "window has launched - it does NOT wait for the user to finish reviewing, attaching "
+                    "screenshots, or exporting, and it does not return a final file path. Requires a "
+                    "graphical session (a local desktop on macOS/Linux, or an X11/Wayland-forwarded "
+                    "display on a remote VM) - if none is available this call fails fast with an error "
+                    "instead of hanging. Prefer this over 'generate_document' whenever a human should see "
+                    "and confirm the content, or needs to attach a screenshot, before the document is final."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string", "description": "Override the inferred document title."},
+                        "ticket": {"type": "string", "description": "Override the inferred ticket/issue ID (e.g. JIRA-1042)."},
+                        "author": {"type": "string", "description": "Override the document author name."},
+                        "approved_by": {"type": "string", "description": "Name of the approver for the 'Approved By' field."},
+                        "images": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Local screenshot file paths to pre-attach, in order. Optional - the user can also drag-and-drop more directly into the panel.",
+                        },
+                        "summary": _SUMMARY_INPUT_SCHEMA,
+                        "repo_path": {
+                            "type": "string",
+                            "description": "Absolute path to the target git repository. Defaults to the server process's current working directory.",
+                        },
+                    },
+                },
+                "handler_name": "_tool_open_preview",
             },
             {
                 "name": "take_screenshot",
@@ -409,11 +608,60 @@ class DATMCPServer:
             approved_by=args.get("approved_by") or "",
             ticket_override=args.get("ticket"),
             image_paths=args.get("images"),
+            summary_override=_build_change_summary(args.get("summary")),
             capture_adb=bool(args.get("capture_adb", False)),
             output_format=args.get("output_format", "docx"),
             cwd=args.get("repo_path"),
         )
         return {"status": "success", "file_path": output_file}
+
+    def _tool_open_preview(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        repo_path = args.get("repo_path") or os.getcwd()
+        if not os.path.isdir(repo_path):
+            raise RuntimeError(f"repo_path '{repo_path}' is not a directory")
+
+        seed_path = _write_seed_file(
+            {
+                "title": args.get("title"),
+                "ticket": args.get("ticket"),
+                "author": args.get("author"),
+                "approved_by": args.get("approved_by"),
+                "images": list(args.get("images") or []),
+                "summary": args.get("summary") or {},
+            }
+        )
+
+        # Launched via the *current* interpreter (sys.executable) rather
+        # than resolving 'dat' on PATH: this server's own install commonly
+        # aliases 'dat' in an interactive shell rc file (see setup.sh),
+        # which a non-interactive subprocess never sources. Re-invoking the
+        # same interpreter that's already running this server guarantees
+        # the exact same environment/install, on macOS, Linux, and inside a
+        # VM alike.
+        cmd = [sys.executable, "-m", "dat.main", "generate-doc", "-s", "--seed-file", seed_path]
+
+        try:
+            process = _spawn_detached(cmd, cwd=repo_path)
+        except Exception as exc:
+            with contextlib.suppress(OSError):
+                os.remove(seed_path)
+            raise RuntimeError(f"Failed to launch the Preview Panel process: {exc}") from exc
+
+        ok, detail = _wait_for_early_exit(process)
+        if not ok:
+            raise RuntimeError(f"Preview Panel exited immediately (likely no graphical session available): {detail}")
+
+        return {
+            "status": "opened",
+            "pid": process.pid,
+            "message": (
+                "The Preview Panel window has been launched and is running independently of this tool "
+                "call, which already returned - it is NOT waiting for the user. Tell the user to review "
+                "the pre-filled Changes Done / Test Cases content, drag-and-drop screenshot files onto "
+                "the panel, and click Export when ready. This tool does not know the exported file's "
+                "final path."
+            ),
+        }
 
     def _tool_take_screenshot(self, args: Dict[str, Any]) -> Dict[str, Any]:
         shot_info = self.container.screenshot_service.capture_adb_screenshot(

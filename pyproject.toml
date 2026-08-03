@@ -15,7 +15,9 @@ dependencies = [
     "pyyaml>=6.0",
     "rich>=13.0.0",
     "pillow>=9.0.0",
-    "requests>=2.25.1"
+    "requests>=2.25.1",
+    "customtkinter>=5.2.0",
+    "tkinterdnd2>=0.3.0"
 ]
 
 [project.optional-dependencies]

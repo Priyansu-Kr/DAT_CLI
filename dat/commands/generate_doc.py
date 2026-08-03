@@ -1,8 +1,5 @@
 import sys
-import os
 import time
-import platform
-import subprocess
 from typing import Dict, Any
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 from rich.console import Console
@@ -52,57 +49,17 @@ class GenerateDocCommand(BaseCommand):
         title_override = args.get("title")
         ticket_override = args.get("ticket")
         author = args.get("author") or self.container.config.author_name
+        approved_by = args.get("approved_by") or ""
         image_paths = list(args.get("images") or [])
         capture_adb = args.get("adb", False)
         fmt = args.get("format", "docx")
 
-        # 2. Feature: Open file dialog to select multiple images from computer
+        # 2. Interactive mode: open the DAT Control Center GUI instead of
+        # generating headlessly. The Preview Panel lets the user configure,
+        # attach screenshots (drag-and-drop), and export directly - so once
+        # the window opens, this command's job is done.
         if args.get("select_images"):
-            selected = []
-            
-            # 1. Try macOS Native Picker (Bypasses the tkinter crash)
-            if platform.system() == "Darwin":
-                try:
-                    script = (
-                        'set theFiles to choose file with prompt '
-                        '"Select Screenshots to include in Documentation" '
-                        'of type {"png", "jpg", "jpeg", "webp"} '
-                        'with multiple selections allowed\n'
-                        'set thePaths to {}\n'
-                        'repeat with aFile in theFiles\n'
-                        '    set end of thePaths to POSIX path of aFile\n'
-                        'end repeat\n'
-                        'set AppleScript\'s text item delimiters to linefeed\n'
-                        'return thePaths as text'
-                    )
-                    result = subprocess.run(
-                        ["osascript", "-e", script],
-                        capture_output=True, text=True
-                    )
-                    if result.returncode == 0 and result.stdout.strip():
-                        selected = [p for p in result.stdout.strip().split("\n") if p]
-                except Exception as e:
-                    console.print(f"[yellow]Native Mac picker failed, trying fallback: {e}[/yellow]")
-
-            # 2. Fallback to Tkinter for Windows/Linux (or if Mac script failed)
-            if not selected:
-                try:
-                    import tkinter as tk
-                    from tkinter import filedialog
-                    root = tk.Tk()
-                    root.withdraw()
-                    # Ensure the window stays on top
-                    root.attributes("-topmost", True)
-                    selected = filedialog.askopenfilenames(
-                        title="Select Screenshots to include in Documentation",
-                        filetypes=[("Image files", "*.png *.jpg *.jpeg *.bmp *.webp")]
-                    )
-                    root.destroy()
-                except Exception as e:
-                    console.print(f"[yellow]Warning: Could not open file dialog: {e}[/yellow]")
-
-            if selected:
-                image_paths.extend(list(selected))
+            return self._launch_gui_preview(console, title_override, ticket_override, author, approved_by, image_paths)
 
         with Progress(
             SpinnerColumn(),
@@ -127,6 +84,7 @@ class GenerateDocCommand(BaseCommand):
                     output_path=output_path,
                     title_override=title_override,
                     author=author,
+                    approved_by=approved_by,
                     ticket_override=ticket_override,
                     image_paths=image_paths,
                     capture_adb=capture_adb,
@@ -143,3 +101,49 @@ class GenerateDocCommand(BaseCommand):
             except Exception as e:
                 console.print(f"\n[bold red]✘ ERROR[/bold red] Failed to generate documentation: {e}")
                 return ExitCode.UNEXPECTED_ERROR
+
+    def _launch_gui_preview(self, console, title_override, ticket_override, author, approved_by, image_paths) -> ExitCode:
+        try:
+            import tkinter  # noqa: F401
+        except ImportError:
+            console.print(
+                "\n[bold red]✘ ERROR[/bold red] The interactive Preview Panel (-s) requires "
+                "Tkinter.\n"
+                "  Linux: sudo apt install python3-tk\n"
+                "  Windows/macOS: Tkinter ships with the standard python.org installer.\n"
+            )
+            return ExitCode.VALIDATION_ERROR
+
+        from dat.gui import macos_compat
+        macos_compat.apply()
+
+        try:
+            import customtkinter  # noqa: F401
+        except ImportError:
+            console.print(
+                "\n[bold red]✘ ERROR[/bold red] The interactive Preview Panel (-s) requires "
+                "the 'customtkinter' package. Install with:\n"
+                "  pip install customtkinter tkinterdnd2\n"
+            )
+            return ExitCode.VALIDATION_ERROR
+        except Exception as e:
+            console.print(f"\n[bold red]✘ ERROR[/bold red] customtkinter failed to load: {e}")
+            return ExitCode.UNEXPECTED_ERROR
+
+        from dat.gui.app import DATGuiApp
+
+        try:
+            app = DATGuiApp(
+                container=self.container,
+                title_override=title_override,
+                ticket_override=ticket_override,
+                author_override=author,
+                approved_by_override=approved_by,
+                image_paths=image_paths,
+            )
+            app.run()
+        except Exception as e:
+            console.print(f"\n[bold red]✘ ERROR[/bold red] Preview Panel failed to start: {e}")
+            return ExitCode.UNEXPECTED_ERROR
+
+        return ExitCode.SUCCESS

@@ -14,6 +14,7 @@
     *   **Mobile Screenshots**: Automatically groups tall images side-by-side (2 per row).
     *   **Web Screenshots**: Places wide images at full page width for maximum clarity.
 -   **Professional Templates**: Generates documents with a clean Arial-based layout, including Metadata Tables, Task Details, and Test Case sections.
+-   **MCP Server**: Use `dat mcp` to expose DAT as tools to any MCP-compatible AI client (Claude Desktop, Claude Code, Cursor, etc.) — see [MCP Integration.md](MCP%20Integration.md).
 
 ---
 
@@ -79,6 +80,9 @@ dat doctor
 
 # View current configuration
 dat config
+
+# Start the MCP server (for AI client/IDE integration - see MCP Integration.md)
+dat mcp
 ```
 
 ---

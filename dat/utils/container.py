@@ -10,7 +10,6 @@ from dat.services.git_service import GitService
 from dat.services.screenshot_service import ScreenshotService
 from dat.services.ai_service import AIService
 from dat.services.document_service import DocumentService
-from dat.services.template_service import TemplateService
 
 class Container:
     _instance: Optional['Container'] = None
@@ -30,7 +29,6 @@ class Container:
         self.git_service = GitService(git_adapter=self.git_adapter)
         self.screenshot_service = ScreenshotService(adb_adapter=self.adb_adapter, fs_adapter=self.filesystem_adapter)
         self.ai_service = AIService(ai_adapter=self.ai_adapter)
-        self.template_service = TemplateService()
 
         self.document_service = DocumentService(
             git_service=self.git_service,

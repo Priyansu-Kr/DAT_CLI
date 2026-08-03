@@ -5,7 +5,9 @@ class TestCLIArgs(unittest.TestCase):
     def test_generate_doc_default_args(self):
         args = parse_args(["generate-doc"])
         self.assertEqual(args.command, "generate-doc")
-        self.assertEqual(args.output, "doc_output.docx")
+        # No hardcoded default - DocumentService derives the output filename
+        # from the (possibly git-inferred) title when this is None.
+        self.assertIsNone(args.output)
         self.assertEqual(args.format, "docx")
         self.assertFalse(args.adb)
 

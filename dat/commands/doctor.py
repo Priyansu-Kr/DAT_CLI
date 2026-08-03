@@ -27,6 +27,24 @@ class DoctorCommand(BaseCommand):
         except ImportError:
             print(f"  [4] PyYAML                  : MISSING")
 
-        print(f"  [5] Configuration Path      : {self.container.configuration_service.config_file}")
+        try:
+            import tkinter
+            print(f"  [5] Tkinter (GUI)           : OK")
+        except ImportError:
+            print(f"  [5] Tkinter (GUI)           : MISSING (Linux: sudo apt install python3-tk)")
+
+        try:
+            import customtkinter
+            print(f"  [6] customtkinter (GUI)     : OK")
+        except ImportError:
+            print(f"  [6] customtkinter (GUI)     : MISSING (pip install customtkinter)")
+
+        try:
+            import tkinterdnd2
+            print(f"  [7] tkinterdnd2 (drag&drop) : OK")
+        except ImportError:
+            print(f"  [7] tkinterdnd2 (drag&drop) : Not installed (GUI falls back to Browse-button only)")
+
+        print(f"  [8] Configuration Path      : {self.container.configuration_service.config_file}")
         print("\nDiagnostics complete.\n")
         return ExitCode.SUCCESS

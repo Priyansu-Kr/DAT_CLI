@@ -1,5 +1,5 @@
-from typing import List, Optional
-from dat.models.doc_request import DocRequest, ChangeSummary
+from typing import Dict, List, Optional
+from dat.models.doc_request import DocRequest, ChangeSummary, DEFAULT_SECTIONS
 from dat.models.screenshot_info import ScreenshotInfo
 from dat.models.git_info import GitInfo
 from dat.services.git_service import GitService
@@ -28,11 +28,15 @@ class DocumentService:
         output_path: Optional[str] = None,
         title_override: Optional[str] = None,
         author: str = "Developer",
+        approved_by: str = "",
         ticket_override: Optional[str] = None,
         image_paths: Optional[List[str]] = None,
         capture_adb: bool = False,
         output_format: str = "docx",
         cwd: Optional[str] = None,
+        sections: Optional[Dict[str, bool]] = None,
+        summary_override: Optional[ChangeSummary] = None,
+        screenshots_override: Optional[List[ScreenshotInfo]] = None,
     ) -> str:
         git_info = self.git_service.get_git_info(cwd=cwd)
 
@@ -46,29 +50,34 @@ class DocumentService:
             # Match filename exactly to title as requested
             output_path = f"{final_title}.{output_format}"
 
-        screenshots: List[ScreenshotInfo] = []
-        if image_paths:
-            screenshots.extend(self.screenshot_service.process_local_images(image_paths))
+        if screenshots_override is not None:
+            screenshots: List[ScreenshotInfo] = list(screenshots_override)
+        else:
+            screenshots = []
+            if image_paths:
+                screenshots.extend(self.screenshot_service.process_local_images(image_paths))
 
-        if capture_adb:
-            try:
-                adb_shot = self.screenshot_service.capture_adb_screenshot()
-                screenshots.append(adb_shot)
-            except Exception as e:
-                print(f"[Warning] ADB screenshot capture failed: {e}")
+            if capture_adb:
+                try:
+                    adb_shot = self.screenshot_service.capture_adb_screenshot()
+                    screenshots.append(adb_shot)
+                except Exception as e:
+                    print(f"[Warning] ADB screenshot capture failed: {e}")
 
-        summary = self.ai_service.generate_change_summary(git_info)
+        summary = summary_override if summary_override is not None else self.ai_service.generate_change_summary(git_info)
 
         doc_req = DocRequest(
             title=final_title,
             subtitle="Automated Feature Documentation",
             author=final_author,
+            approved_by=approved_by,
             ticket_id=final_ticket,
             git_info=git_info,
             summary=summary,
             screenshots=screenshots,
             output_format=output_format,
             output_path=output_path,
+            sections=dict(sections) if sections else dict(DEFAULT_SECTIONS),
         )
 
         if output_format.lower() == "md" or output_path.endswith(".md"):

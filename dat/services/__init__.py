@@ -3,7 +3,6 @@ from dat.services.git_service import GitService
 from dat.services.screenshot_service import ScreenshotService
 from dat.services.ai_service import AIService
 from dat.services.document_service import DocumentService
-from dat.services.template_service import TemplateService
 
 __all__ = [
     "ConfigurationService",
@@ -11,5 +10,4 @@ __all__ = [
     "ScreenshotService",
     "AIService",
     "DocumentService",
-    "TemplateService",
 ]

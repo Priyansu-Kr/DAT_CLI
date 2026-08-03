@@ -65,7 +65,6 @@ class GenerateDocCommand(BaseCommand):
         author = args.get("author") or seed_data.get("author") or self.container.config.author_name
         approved_by = args.get("approved_by") or seed_data.get("approved_by") or ""
         image_paths = list(args.get("images") or seed_data.get("images") or [])
-        capture_adb = args.get("adb", False)
         fmt = args.get("format", "docx")
 
         # 2. Interactive mode: open the DAT Control Center GUI instead of
@@ -104,7 +103,6 @@ class GenerateDocCommand(BaseCommand):
                     approved_by=approved_by,
                     ticket_override=ticket_override,
                     image_paths=image_paths,
-                    capture_adb=capture_adb,
                     output_format=fmt
                 )
                 

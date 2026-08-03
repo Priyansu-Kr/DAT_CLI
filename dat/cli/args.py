@@ -28,13 +28,7 @@ def parse_args(args_list: Optional[List[str]] = None) -> argparse.Namespace:
             "normally passed by hand."
         ),
     )
-    doc_parser.add_argument("--adb", action="store_true", help="Automatically capture screenshot from connected Android device via ADB")
     doc_parser.add_argument("-f", "--format", choices=["docx", "md"], default="docx", help="Output document format")
-
-    # dat screenshot
-    ss_parser = subparsers.add_parser("screenshot", help="Capture screenshot from connected Android device via ADB")
-    ss_parser.add_argument("-o", "--output", default="screenshot.png", help="Output screenshot path")
-    ss_parser.add_argument("-d", "--device", help="Specific ADB device serial number")
 
     # dat gui
     subparsers.add_parser("gui", help="Launch the DAT Control Center GUI dashboard")

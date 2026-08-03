@@ -2,7 +2,6 @@ import sys
 from dat.cli.args import parse_args
 from dat.cli.formatter import print_banner
 from dat.commands.generate_doc import GenerateDocCommand
-from dat.commands.screenshot import ScreenshotCommand
 from dat.commands.doctor import DoctorCommand
 from dat.commands.config_cmd import ConfigCommand
 from dat.commands.gui_cmd import GuiCommand
@@ -19,7 +18,6 @@ def main():
 
     cmd_map = {
         "generate-doc": GenerateDocCommand(),
-        "screenshot": ScreenshotCommand(),
         "doctor": DoctorCommand(),
         "config": ConfigCommand(),
         "gui": GuiCommand(),

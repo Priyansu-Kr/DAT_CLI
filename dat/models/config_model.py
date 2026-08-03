@@ -6,7 +6,6 @@ class DATConfig:
     author_name: str = "Developer"
     author_email: str = "developer@example.com"
     default_output_dir: str = "./docs"
-    adb_path: str = "adb"
     git_path: str = "git"
     ai_provider: str = "rule-based"
     ai_api_key: Optional[str] = None

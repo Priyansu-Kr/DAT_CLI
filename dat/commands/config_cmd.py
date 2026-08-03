@@ -17,7 +17,6 @@ class ConfigCommand(BaseCommand):
         print(f"Author Email       : {cfg.author_email}")
         print(f"Default Output Dir : {cfg.default_output_dir}")
         print(f"Git Binary Path    : {cfg.git_path}")
-        print(f"ADB Binary Path    : {cfg.adb_path}")
         print(f"AI Provider        : {cfg.ai_provider}")
         print("------------------------------------------\n")
         return ExitCode.SUCCESS

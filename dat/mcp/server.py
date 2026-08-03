@@ -1,8 +1,9 @@
 """DAT MCP (Model Context Protocol) server.
 
 Exposes the same DAT capabilities available through the `dat` CLI -
-git-aware documentation generation, ADB screenshot capture, environment
-diagnostics, and configuration inspection - as MCP tools over a stdio
+git-aware documentation generation, an interactive screenshot-attaching
+Preview Panel, environment diagnostics, and configuration inspection - as
+MCP tools over a stdio
 JSON-RPC 2.0 transport, so any MCP-compatible AI client/agent (Claude
 Desktop, Claude Code, Cursor, etc.) can drive DAT directly.
 
@@ -48,8 +49,8 @@ LATEST_PROTOCOL_VERSION = SUPPORTED_PROTOCOL_VERSIONS[0]
 SERVER_NAME = "dat-mcp-server"
 SERVER_INSTRUCTIONS = (
     "DAT (Developer Automation Toolkit) exposes git-aware PR/feature "
-    "documentation generation, Android ADB screenshot capture, and "
-    "environment diagnostics as tools. Call 'get_git_summary' to see the "
+    "documentation generation and environment diagnostics as tools. Call "
+    "'get_git_summary' to see the "
     "current repo's branch/ticket/diff context. Then, since you (the "
     "calling model) almost always have far more context on the actual "
     "change than a fresh AI call over the raw diff could infer, write your "
@@ -333,11 +334,6 @@ class DATMCPServer:
                             "description": "Local screenshot file paths to embed, in order.",
                         },
                         "summary": _SUMMARY_INPUT_SCHEMA,
-                        "capture_adb": {
-                            "type": "boolean",
-                            "default": False,
-                            "description": "Capture an additional screenshot from a connected Android device/emulator via ADB.",
-                        },
                         "output_format": {
                             "type": "string",
                             "enum": ["docx", "md"],
@@ -388,24 +384,6 @@ class DATMCPServer:
                 "handler_name": "_tool_open_preview",
             },
             {
-                "name": "take_screenshot",
-                "description": "Captures a screenshot from a connected Android device or emulator via ADB.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "output_path": {
-                            "type": "string",
-                            "description": "Destination PNG path. Defaults to a temp-directory file.",
-                        },
-                        "device_id": {
-                            "type": "string",
-                            "description": "Specific ADB device serial. Defaults to the first connected device.",
-                        },
-                    },
-                },
-                "handler_name": "_tool_take_screenshot",
-            },
-            {
                 "name": "get_git_summary",
                 "description": (
                     "Retrieves the current branch name, inferred title/ticket ID, "
@@ -430,7 +408,7 @@ class DATMCPServer:
             },
             {
                 "name": "run_doctor",
-                "description": "Runs environment diagnostics on DAT's binary/package dependencies (git, adb, python-docx, PyYAML).",
+                "description": "Runs environment diagnostics on DAT's binary/package dependencies (git, python-docx, PyYAML).",
                 "inputSchema": {"type": "object", "properties": {}},
                 "handler_name": "_tool_run_doctor",
             },
@@ -609,7 +587,6 @@ class DATMCPServer:
             ticket_override=args.get("ticket"),
             image_paths=args.get("images"),
             summary_override=_build_change_summary(args.get("summary")),
-            capture_adb=bool(args.get("capture_adb", False)),
             output_format=args.get("output_format", "docx"),
             cwd=args.get("repo_path"),
         )
@@ -663,13 +640,6 @@ class DATMCPServer:
             ),
         }
 
-    def _tool_take_screenshot(self, args: Dict[str, Any]) -> Dict[str, Any]:
-        shot_info = self.container.screenshot_service.capture_adb_screenshot(
-            output_path=args.get("output_path"),
-            device_id=args.get("device_id"),
-        )
-        return {"status": "success", "file_path": shot_info.file_path}
-
     def _tool_get_git_summary(self, args: Dict[str, Any]) -> Dict[str, Any]:
         max_files = int(args.get("max_changed_files") or 20)
         git_info = self.container.git_service.get_git_info(cwd=args.get("repo_path"))
@@ -691,9 +661,6 @@ class DATMCPServer:
         diagnostics: Dict[str, Any] = {
             "is_git_repo": self.container.git_adapter.is_git_repo(),
             "git_path": self.container.config.git_path,
-            "adb_available": self.container.adb_adapter.is_adb_available(),
-            "adb_devices": self.container.adb_adapter.get_devices(),
-            "adb_path": self.container.config.adb_path,
             "ai_provider": self.container.config.ai_provider,
             "ai_configured": bool(self.container.config.ai_api_key),
             "config_file": self.container.configuration_service.config_file,
@@ -713,7 +680,6 @@ class DATMCPServer:
             "author_email": cfg.author_email,
             "default_output_dir": cfg.default_output_dir,
             "git_path": cfg.git_path,
-            "adb_path": cfg.adb_path,
             "ai_provider": cfg.ai_provider,
             "ai_api_key_configured": bool(cfg.ai_api_key),
             "config_file": self.container.configuration_service.config_file,

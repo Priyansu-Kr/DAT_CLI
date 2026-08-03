@@ -1,10 +1,10 @@
 # DAT MCP Server
 
 DAT ships a built-in [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server. It exposes the same
-capabilities as the `dat` CLI — git-aware documentation generation, ADB screenshot capture, environment
-diagnostics, and configuration inspection — as **tools** any MCP-compatible AI client or IDE agent (Claude
-Desktop, Claude Code, Cursor, VS Code Copilot, etc.) can call directly, in any project, without you having to
-run `dat generate-doc` by hand.
+capabilities as the `dat` CLI — git-aware documentation generation, an interactive screenshot-attaching Preview
+Panel, environment diagnostics, and configuration inspection — as **tools** any MCP-compatible AI client or IDE
+agent (Claude Desktop, Claude Code, Cursor, VS Code Copilot, etc.) can call directly, in any project, without
+you having to run `dat generate-doc` by hand.
 
 Once connected, you can just ask your assistant things like *"generate the PR documentation for this branch"*
 or *"check if my environment has everything DAT needs"*, and it will call the right tool for you.
@@ -18,9 +18,9 @@ or *"check if my environment has everything DAT needs"*, and it will call the ri
 - Verify it works: `dat doctor` should run without a "command not found" error.
 
 No extra dependencies are required for the MCP server itself — it's part of the core `dat` package and talks
-raw JSON-RPC 2.0 over stdio, so nothing beyond the base install is needed. `python-docx`/`customtkinter`/`adb`
-are only required by the individual *tools* that use them (e.g. `generate_document`, `take_screenshot`); the
-server itself will start regardless, and each tool reports a clear error if its own dependency is missing.
+raw JSON-RPC 2.0 over stdio, so nothing beyond the base install is needed. `python-docx`/`customtkinter` are
+only required by the individual *tools* that use them (`generate_document`, `open_preview`); the server itself
+will start regardless, and each tool reports a clear error if its own dependency is missing.
 
 ---
 
@@ -138,9 +138,8 @@ arguments. Use `command: "dat"`, `args: ["mcp"]`. If your client can't set a per
 |---|---|
 | `generate_document` | Generates a DOCX or Markdown PR/feature doc from the current git branch's diff, commits, and screenshots — headless, no GUI |
 | `open_preview` | Opens the interactive Preview Panel (GUI), pre-filled with your content, so a human can confirm it, drag-and-drop screenshots onto it, and export themselves |
-| `take_screenshot` | Captures a screenshot from a connected Android device/emulator via ADB |
 | `get_git_summary` | Returns branch name, inferred title/ticket ID, changed files, and recent commits |
-| `run_doctor` | Reports whether git/adb/python-docx/PyYAML are available and configured |
+| `run_doctor` | Reports whether git/python-docx/PyYAML are available and configured |
 | `get_config` | Reads DAT's persisted configuration (author defaults, output dir, AI provider) — secrets are never returned, only whether they're set |
 
 ### Bring your own summary: the `summary` argument
@@ -170,7 +169,6 @@ Headless: writes the file directly and returns its path. No human sees the conte
 | `approved_by` | string | *(empty)* | Name for the "Approved By" field |
 | `images` | string[] | *(none)* | Local screenshot paths to embed, in order |
 | `summary` | object | *(none)* | AI-authored content — see above. Omitted fields fall back to DAT's own AI generation |
-| `capture_adb` | boolean | `false` | Also capture a screenshot from a connected Android device |
 | `output_format` | `"docx"` \| `"md"` | `"docx"` | Output format |
 | `repo_path` | string | server's cwd | Absolute path to the target git repository |
 
@@ -195,13 +193,6 @@ Opens DAT's desktop Preview Panel pre-filled with the supplied `title`/`ticket`/
 Requires a graphical session: a local desktop on macOS/Linux, or an X11/Wayland-forwarded display if the MCP server is running inside a VM/remote session. If none is available, the call fails immediately with a clear error (rather than hanging) — DAT watches the launched process for ~1.5s and surfaces its captured output if it exits in that window.
 
 Example prompt: *"I just added biometric login to the auth flow. Write 3 precise test cases and the affected modules, then open the Preview Panel so I can attach a screenshot and export."*
-
-### `take_screenshot`
-
-| Argument | Type | Default | Description |
-|---|---|---|---|
-| `output_path` | string | temp-dir file | Destination PNG path |
-| `device_id` | string | first connected device | Specific ADB device serial |
 
 ### `get_git_summary`
 
@@ -239,10 +230,7 @@ you have two options:
   indicates a client bug, not a DAT issue; the server rejects `tools/list`/`tools/call` before `initialize`
   by design (per the MCP spec).
 - **A tool call fails immediately** — run `run_doctor` (or `dat doctor` from a terminal) first; the most
-  common causes are a missing `git`/`adb` binary or a missing `python-docx`/`customtkinter` package.
-- **ADB-related tools fail** — `take_screenshot` and `generate_document`'s `capture_adb` option need an
-  Android device/emulator connected and visible to `adb devices`. This is optional; document generation
-  works fine without it.
+  common causes are a missing `git` binary or a missing `python-docx`/`customtkinter` package.
 - **Nothing seems to happen** — the server is silent by design (stdout is reserved for JSON-RPC only). Run
   `dat mcp --log-level DEBUG` and watch stderr, or check your MCP client's own connection logs.
 - **Want to see exactly what's being called** — every tool invocation, its result, and any suppressed
@@ -268,7 +256,7 @@ you have two options:
 - **stdout purity**: stdout carries only JSON-RPC messages. Every tool call runs with stdout redirected to an
   internal buffer, so even if an underlying service prints a warning, it's logged to stderr instead of
   corrupting the protocol stream.
-- **Error semantics**: a tool that fails during execution (e.g. no ADB device connected) is reported as a
+- **Error semantics**: a tool that fails during execution (e.g. a missing `git` binary) is reported as a
   normal result with `isError: true` and a human-readable message, so your assistant can see what went wrong
   and react — it isn't treated as a protocol-level failure. Bad input (unknown tool, wrong argument type,
   invalid JSON) *is* a protocol-level error, per JSON-RPC/MCP conventions.

@@ -20,7 +20,6 @@ class ConfigurationService:
                     if "author_name" in data: config.author_name = str(data["author_name"])
                     if "author_email" in data: config.author_email = str(data["author_email"])
                     if "default_output_dir" in data: config.default_output_dir = str(data["default_output_dir"])
-                    if "adb_path" in data: config.adb_path = str(data["adb_path"])
                     if "git_path" in data: config.git_path = str(data["git_path"])
                     if "ai_provider" in data: config.ai_provider = str(data["ai_provider"])
                     if "ai_api_key" in data: config.ai_api_key = str(data["ai_api_key"])
@@ -39,7 +38,6 @@ class ConfigurationService:
             "author_name": config.author_name,
             "author_email": config.author_email,
             "default_output_dir": config.default_output_dir,
-            "adb_path": config.adb_path,
             "git_path": config.git_path,
             "ai_provider": config.ai_provider,
         }

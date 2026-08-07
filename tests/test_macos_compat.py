@@ -162,6 +162,31 @@ class TestShimAppliedAtPackageImport(MacOSShimTestCase):
         importlib.import_module("dat.gui")
 
 
+class TestMacOSQuitHandler(unittest.TestCase):
+    """⌘Q on Aqua goes through tk::mac::Quit, not WM_DELETE_WINDOW, so without
+    registering it the debounced content edits are never flushed."""
+
+    def test_registered_only_on_macos(self):
+        from dat.gui import app as app_module
+
+        app = mock.Mock(spec=["createcommand", "_on_close"])
+        with mock.patch.object(app_module.sys, "platform", "linux"):
+            app_module.DATGuiApp._register_macos_quit_handler(app)
+        app.createcommand.assert_not_called()
+
+        with mock.patch.object(app_module.sys, "platform", "darwin"):
+            app_module.DATGuiApp._register_macos_quit_handler(app)
+        app.createcommand.assert_called_once_with("tk::mac::Quit", app._on_close)
+
+    def test_a_failure_to_register_is_not_fatal(self):
+        from dat.gui import app as app_module
+
+        app = mock.Mock(spec=["createcommand", "_on_close"])
+        app.createcommand.side_effect = RuntimeError("no Aqua here")
+        with mock.patch.object(app_module.sys, "platform", "darwin"):
+            app_module.DATGuiApp._register_macos_quit_handler(app)  # must not raise
+
+
 class TestPlatformSpecificHints(unittest.TestCase):
     def test_macos_hint_does_not_mention_apt(self):
         with mock.patch.object(sys, "platform", "darwin"):

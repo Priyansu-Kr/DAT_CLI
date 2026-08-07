@@ -4,6 +4,7 @@ Built on CustomTkinter (Tk) - CPU/software rasterized, no GPU required, so
 it runs unmodified inside headless VMs and remote desktops.
 """
 import os
+import sys
 import threading
 from tkinter import filedialog, messagebox
 from typing import List, Optional
@@ -183,6 +184,7 @@ class DATGuiApp(*_DND_MIXIN):
         self._restore_active_template()
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self._register_macos_quit_handler()
 
         if image_paths:
             screenshots = self.container.screenshot_service.process_local_images(image_paths)
@@ -562,6 +564,9 @@ class DATGuiApp(*_DND_MIXIN):
             initialfile=default_name,
             defaultextension=".docx",
             filetypes=[("Word Document", "*.docx")],
+            # parent= keeps the save sheet attached to this window on macOS,
+            # where an unparented dialog can open behind the app.
+            parent=self,
         )
         if not output_path:
             return
@@ -592,6 +597,22 @@ class DATGuiApp(*_DND_MIXIN):
             messagebox.showerror("Export Failed", f"Failed to generate documentation:\n{e}")
 
     # --- Shutdown ----------------------------------------------------------
+
+    def _register_macos_quit_handler(self):
+        """Route macOS's ⌘Q through our own close path.
+
+        Tk on Aqua handles ⌘Q with its default `tk::mac::Quit`, which exits
+        without ever firing WM_DELETE_WINDOW - so the debounced content
+        edits would never be flushed and the last thing typed would be lost.
+        Overriding that command is the documented way to hook it.
+        """
+        if sys.platform != "darwin":
+            return
+        try:
+            self.createcommand("tk::mac::Quit", self._on_close)
+        except Exception as e:
+            # Not fatal: the window's own close box still flushes properly.
+            print(f"[Warning] Could not install the macOS Quit handler: {e}")
 
     def _on_close(self):
         """Flush debounced content edits so closing never loses the last word."""

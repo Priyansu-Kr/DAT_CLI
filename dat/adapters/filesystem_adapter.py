@@ -1,5 +1,4 @@
 import os
-import shutil
 import tempfile
 from typing import Optional, List
 
@@ -10,17 +9,8 @@ class FilesystemAdapter:
     def is_file(self, path: str) -> bool:
         return os.path.isfile(path)
 
-    def is_dir(self, path: str) -> bool:
-        return os.path.isdir(path)
-
     def ensure_dir(self, dir_path: str) -> None:
         os.makedirs(dir_path, exist_ok=True)
-
-    def copy_file(self, src: str, dst: str) -> str:
-        dst_dir = os.path.dirname(dst)
-        if dst_dir:
-            self.ensure_dir(dst_dir)
-        return shutil.copy2(src, dst)
 
     def read_text(self, path: str) -> str:
         with open(path, "r", encoding="utf-8", errors="ignore") as f:

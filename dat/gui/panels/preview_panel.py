@@ -11,13 +11,7 @@ import customtkinter as ctk
 from dat.gui import theme
 from dat.gui.state import PreviewBlock
 from dat.gui.text_fit import truncate_to_width
-from dat.gui.widgets.document_canvas import (  # re-exported for backwards compatibility
-    PAGE_BG,
-    PAGE_BORDER,
-    PAGE_TEXT,
-    THUMB_MAX_WIDTH,
-    DocumentCanvas,
-)
+from dat.gui.widgets.document_canvas import DocumentCanvas
 
 
 EXPORT_BUTTON_WIDTH = 160
@@ -109,8 +103,6 @@ class PreviewPanel(ctk.CTkFrame):
     def _build_page(self):
         self.canvas = DocumentCanvas(self)
         self.canvas.pack(fill="both", expand=True, padx=theme.PADDING_LG, pady=(0, theme.PADDING_LG))
-        # Kept as an attribute for callers/tests that reach for the page frame.
-        self.page = self.canvas.page
 
     def set_title(self, title: str):
         """Set the document name, shortened with an ellipsis if it is too long

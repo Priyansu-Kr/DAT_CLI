@@ -276,6 +276,9 @@ class DATGuiApp(*_DND_MIXIN):
         # Editing content can introduce or remove a token, so the shared
         # fields are re-evaluated here; the setter no-ops when unchanged.
         self._refresh_shared_fields()
+        if self.state_model.active_template is not None and not self._builder_is_open():
+            # Cheap self-heal: if the builder is gone, editing is ours again.
+            self.control_panel.set_content_locked(False)
         self.preview_panel.set_title(self.state_model.title)
         template = self.state_model.active_template
         self.preview_panel.set_subtitle(
@@ -467,7 +470,17 @@ class DATGuiApp(*_DND_MIXIN):
         self._activate_template(None)
 
     def _builder_is_open(self) -> bool:
-        return self._builder_window is not None and bool(self._builder_window.winfo_exists())
+        if self._builder_window is None:
+            return False
+        try:
+            alive = bool(self._builder_window.winfo_exists())
+        except Exception:
+            alive = False
+        if not alive:
+            # Drop the reference as soon as we notice, so a builder that went
+            # away without notifying can't keep the content editor locked.
+            self._builder_window = None
+        return alive
 
     def _open_builder(self, template: Optional[DocumentTemplate]):
         # One builder at a time: a second window editing the same template

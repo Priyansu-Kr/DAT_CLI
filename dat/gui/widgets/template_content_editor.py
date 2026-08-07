@@ -380,12 +380,3 @@ class TemplateContentEditor(ctk.CTkFrame):
         self._rebuild()
         self._notify(CHANGE_ACTION)
 
-    def field_count(self) -> int:
-        """Number of editable fields currently rendered (used by tests)."""
-        if self._template is None or self._locked:
-            return 0
-        return sum(
-            len([f for f in content_fields(b) if f.kind != FIELD_NOTE])
-            for s in self._template.sections if self._is_visible(s)
-            for b in s.blocks
-        )

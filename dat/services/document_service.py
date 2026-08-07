@@ -1,7 +1,6 @@
 from typing import Dict, List, Optional
 from dat.models.doc_request import DocRequest, ChangeSummary, DEFAULT_SECTIONS
 from dat.models.screenshot_info import ScreenshotInfo
-from dat.models.git_info import GitInfo
 from dat.services.git_service import GitService
 from dat.services.screenshot_service import ScreenshotService
 from dat.services.ai_service import AIService

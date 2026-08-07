@@ -15,7 +15,6 @@ BORDER_MUTED = "#33363a"
 TEXT_PRIMARY = "#f5f6f7"
 TEXT_SECONDARY = "#a7adb3"
 TEXT_MUTED = "#7c848c"
-STATUS_SUCCESS = "#2ecc71"
 STATUS_ERROR = "#ff5c5c"
 STATUS_WARNING = "#f0a92c"
 
@@ -55,7 +54,6 @@ BUILDER_SIDEBAR_WIDTH = 262
 PADDING_LG = 32
 PADDING_MD = 24
 PADDING_SM = 16
-TABLE_ROW_HEIGHT = 30
 
 CORNER_RADIUS = 10
 
@@ -91,9 +89,6 @@ def resolve_fonts() -> None:
             FONT_MONO_FAMILY = name
             break
 
-
-def interface_font_tuple(size: int = FONT_SIZE_BODY, weight: str = "normal") -> tuple:
-    return (FONT_INTERFACE_FAMILY, size, weight)
 
 
 def document_font_tuple(size: int = FONT_SIZE_DOC_BODY, weight: str = "normal") -> tuple:

@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Optional
 from dat.adapters.ai_adapter import AIAdapter
 from dat.models.doc_request import ChangeSummary
 from dat.models.git_info import GitInfo

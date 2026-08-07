@@ -116,6 +116,7 @@ class TemplateBuilderWindow(ctk.CTkToplevel):
             self.template.sections[0].section_id if self.template.sections else None
         )
         self._selected_block_id: Optional[str] = None
+        self._closed_notified = False
 
         self.title(f"DAT · {self.template.name}")
         self.geometry("1180x820")
@@ -1090,10 +1091,6 @@ class TemplateBuilderWindow(ctk.CTkToplevel):
         block.set_header(col, value)
         self._mark_dirty()
 
-    def _set_table_cell(self, block: TemplateBlock, row: int, col: int, value: str) -> None:
-        block.set_cell(row, col, value)
-        self._mark_dirty()
-
     def _resize_table(self, block: TemplateBlock, rows: int, cols: int) -> None:
         block.set_table_size(rows, cols)
         self._mark_dirty()
@@ -1161,6 +1158,20 @@ class TemplateBuilderWindow(ctk.CTkToplevel):
             if answer and not self._on_save():
                 return
         self.destroy()
-        # Let the owner hand content editing back to the Control Center.
-        if self.on_closed:
-            self.on_closed()
+
+    def destroy(self) -> None:
+        """Notify the owner however this window goes away.
+
+        The Control Center disables its content editor while this window owns
+        the template, so a close path that skipped the callback left those
+        fields permanently uneditable - "I can't type in the panel". Hooking
+        destroy() covers every route: the back button, the window manager's
+        close box, Escape, and a programmatic destroy during shutdown.
+        """
+        already_notified = self._closed_notified
+        self._closed_notified = True
+        try:
+            super().destroy()
+        finally:
+            if not already_notified and self.on_closed:
+                self.on_closed()

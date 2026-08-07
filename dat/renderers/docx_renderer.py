@@ -1,11 +1,9 @@
 import os
-from typing import Optional, List
+from typing import List
 import docx
 from docx.shared import Inches, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_TABLE_ALIGNMENT
-from docx.oxml import parse_xml
-from docx.oxml.ns import nsdecls
 from datetime import datetime
 from PIL import Image
 
@@ -306,26 +304,3 @@ class DocxRenderer(BaseRenderer):
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         doc.save(output_path)
         return output_path
-
-    def _add_code_block(self, doc, code_text: str):
-        table = doc.add_table(rows=1, cols=1)
-        table.alignment = WD_TABLE_ALIGNMENT.CENTER
-        cell = table.cell(0, 0)
-        self._set_cell_background(cell, "F8FAFC")
-        
-        p = cell.paragraphs[0]
-        run = p.add_run(code_text)
-        run.font.name = 'Courier New'
-        run.font.size = Pt(8)
-
-    def _set_cell_background(self, cell, hex_color: str):
-        tcPr = cell._element.get_or_add_tcPr()
-        shd = parse_xml(f'<w:shd {nsdecls("w")} w:fill="{hex_color}"/>')
-        tcPr.append(shd)
-
-    def _add_divider(self, doc, color_hex: str = "1E3A8A"):
-        p = doc.add_paragraph()
-        p.paragraph_format.space_before = Pt(0)
-        p.paragraph_format.space_after = Pt(12)
-        pBdr = parse_xml(f'<w:pBdr {nsdecls("w")}><w:bottom w:val="single" w:sz="18" w:space="1" w:color="{color_hex}"/></w:pBdr>')
-        p._element.get_or_add_pPr().append(pBdr)

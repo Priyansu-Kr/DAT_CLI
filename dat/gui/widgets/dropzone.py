@@ -10,6 +10,7 @@ from typing import Callable, List, Optional
 import customtkinter as ctk
 
 from dat.gui import theme
+from dat.gui.text_fit import truncate_to_length
 from dat.models.screenshot_info import ScreenshotInfo
 
 try:
@@ -21,6 +22,7 @@ except ImportError:
 
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp", ".webp", ".gif")
 DEFAULT_ROW_HEIGHT = 36
+MAX_FILENAME_LENGTH = 12
 
 
 def _parse_dnd_paths(raw: str) -> List[str]:
@@ -175,13 +177,6 @@ class DropZone(ctk.CTkFrame):
         )
         handle.pack(side="left", padx=(8, 0), pady=6)
 
-        label = ctk.CTkLabel(
-            row, text=os.path.basename(shot.file_path), anchor="w",
-            text_color=theme.TEXT_PRIMARY,
-            font=(theme.FONT_INTERFACE_FAMILY, theme.FONT_SIZE_LABEL),
-        )
-        label.pack(side="left", fill="x", expand=True, padx=(6, 4), pady=6)
-
         current = "Auto" if shot.test_case_index is None else f"Test Case {shot.test_case_index + 1}"
         assign_menu = ctk.CTkOptionMenu(
             row, values=self._assignment_options(), width=118, height=24,
@@ -195,10 +190,18 @@ class DropZone(ctk.CTkFrame):
 
         remove_btn = ctk.CTkButton(
             row, text="✕", width=24, height=24, fg_color="transparent",
-            hover_color=theme.STATUS_ERROR, text_color=theme.TEXT_SECONDARY,
+            hover_color=theme.SURFACE_GREY, text_color=theme.STATUS_ERROR,
             command=lambda p=shot.file_path: self.on_file_removed(p),
         )
         remove_btn.pack(side="right", padx=(4, 10), pady=4)
+
+        filename = truncate_to_length(os.path.basename(shot.file_path), MAX_FILENAME_LENGTH)
+        label = ctk.CTkLabel(
+            row, text=filename, anchor="w",
+            text_color=theme.TEXT_PRIMARY,
+            font=(theme.FONT_INTERFACE_FAMILY, theme.FONT_SIZE_LABEL),
+        )
+        label.pack(side="left", fill="x", expand=True, padx=(6, 4), pady=6)
 
         for widget in (handle, row, label):
             widget.bind("<ButtonPress-1>", lambda e, i=idx: self._start_drag(i))

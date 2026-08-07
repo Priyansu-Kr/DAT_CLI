@@ -4,11 +4,13 @@ from dat.adapters.git_adapter import GitAdapter
 from dat.adapters.ai_adapter import AIAdapter
 from dat.renderers.docx_renderer import DocxRenderer
 from dat.renderers.markdown_renderer import MarkdownRenderer
+from dat.renderers.template_docx_renderer import TemplateDocxRenderer
 from dat.services.configuration_service import ConfigurationService
 from dat.services.git_service import GitService
 from dat.services.screenshot_service import ScreenshotService
 from dat.services.ai_service import AIService
 from dat.services.document_service import DocumentService
+from dat.services.template_store import TemplateStore
 
 class Container:
     _instance: Optional['Container'] = None
@@ -23,6 +25,9 @@ class Container:
 
         self.docx_renderer = DocxRenderer()
         self.md_renderer = MarkdownRenderer()
+        self.template_docx_renderer = TemplateDocxRenderer()
+
+        self.template_store = TemplateStore(fs=self.filesystem_adapter)
 
         self.git_service = GitService(git_adapter=self.git_adapter)
         self.screenshot_service = ScreenshotService(fs_adapter=self.filesystem_adapter)

@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional, Tuple
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 from rich.console import Console
 from dat.commands.base import BaseCommand
+from dat.commands.doctor import tkinter_install_hint
 from dat.models.doc_request import ChangeSummary
 from dat.utils.exit_codes import ExitCode
 
@@ -67,12 +68,14 @@ class GenerateDocCommand(BaseCommand):
         image_paths = list(args.get("images") or seed_data.get("images") or [])
         fmt = args.get("format", "docx")
 
-        # 2. Interactive mode: open the DAT Control Center GUI instead of
-        # generating headlessly. The Preview Panel lets the user configure,
-        # attach screenshots (drag-and-drop), and export directly - so once
-        # the window opens, this command's job is done. A seed file always
-        # implies preview mode - there'd be no other way to see its content.
-        if args.get("select_images") or seed_file:
+        # 2. The Preview Panel is the default destination for a generated
+        # document: the user reviews the content, attaches screenshots by
+        # drag-and-drop, and exports when satisfied - so once the window
+        # opens, this command's job is done. Writing a file straight to disk
+        # skips that review, so it has to be asked for with --headless.
+        # (A seed file always implies preview: there'd be no other way to
+        # see the content a programmatic caller handed over.)
+        if not args.get("headless") or seed_file:
             return self._launch_gui_preview(
                 console, title_override, ticket_override, author, approved_by, image_paths, summary_override
             )
@@ -158,17 +161,38 @@ class GenerateDocCommand(BaseCommand):
 
         return summary_override, data
 
+    @staticmethod
+    def _graphical_session_available() -> bool:
+        """Whether a desktop session exists to open a window on.
+
+        macOS and Windows always have one for a logged-in user; X11/Wayland
+        advertise theirs through the environment, and its absence is what a
+        headless server or an SSH session without forwarding looks like.
+        """
+        if sys.platform in ("darwin", "win32"):
+            return True
+        return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+
     def _launch_gui_preview(
         self, console, title_override, ticket_override, author, approved_by, image_paths, summary_override=None
     ) -> ExitCode:
+        if not self._graphical_session_available():
+            console.print(
+                "\n[bold red]✘ ERROR[/bold red] No graphical session is available, so the Preview "
+                "Panel cannot open.\n"
+                "  Run this from a desktop session, or forward a display over SSH (ssh -X).\n"
+                "  To write the document straight to disk instead, re-run with [bold]--headless[/bold].\n"
+            )
+            return ExitCode.VALIDATION_ERROR
+
         try:
             import tkinter  # noqa: F401
         except ImportError:
             console.print(
-                "\n[bold red]✘ ERROR[/bold red] The interactive Preview Panel (-s) requires "
+                "\n[bold red]✘ ERROR[/bold red] The interactive Preview Panel requires "
                 "Tkinter.\n"
-                "  Linux: sudo apt install python3-tk\n"
-                "  Windows/macOS: Tkinter ships with the standard python.org installer.\n"
+                f"  {tkinter_install_hint()}\n"
+                "  Or re-run with [bold]--headless[/bold] to write the document without it.\n"
             )
             return ExitCode.VALIDATION_ERROR
 
@@ -179,9 +203,10 @@ class GenerateDocCommand(BaseCommand):
             import customtkinter  # noqa: F401
         except ImportError:
             console.print(
-                "\n[bold red]✘ ERROR[/bold red] The interactive Preview Panel (-s) requires "
+                "\n[bold red]✘ ERROR[/bold red] The interactive Preview Panel requires "
                 "the 'customtkinter' package. Install with:\n"
                 "  pip install customtkinter tkinterdnd2\n"
+                "  Or re-run with [bold]--headless[/bold] to write the document without it.\n"
             )
             return ExitCode.VALIDATION_ERROR
         except Exception as e:

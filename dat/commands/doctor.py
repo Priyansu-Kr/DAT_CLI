@@ -1,6 +1,23 @@
-from typing import Dict, Any
+import sys
+from typing import Any, Dict
+
 from dat.commands.base import BaseCommand
 from dat.utils.exit_codes import ExitCode
+
+
+def tkinter_install_hint() -> str:
+    """How to get Tkinter on *this* machine.
+
+    Printing apt commands to a macOS user is worse than printing nothing -
+    Tk isn't an apt package there, and a Homebrew python needs a separate
+    formula rather than the system package.
+    """
+    if sys.platform == "darwin":
+        return "macOS: brew install python-tk  (or use the python.org installer, which bundles Tk)"
+    if sys.platform == "win32":
+        return "Windows: reinstall Python from python.org with the 'tcl/tk' option enabled"
+    return "Linux: sudo apt install python3-tk  (Fedora: python3-tkinter, Arch: tk)"
+
 
 class DoctorCommand(BaseCommand):
     def execute(self, args: Dict[str, Any]) -> ExitCode:
@@ -26,7 +43,7 @@ class DoctorCommand(BaseCommand):
             import tkinter
             print(f"  [4] Tkinter (GUI)           : OK")
         except ImportError:
-            print(f"  [4] Tkinter (GUI)           : MISSING (Linux: sudo apt install python3-tk)")
+            print(f"  [4] Tkinter (GUI)           : MISSING ({tkinter_install_hint()})")
 
         try:
             import customtkinter

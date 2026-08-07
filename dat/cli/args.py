@@ -17,7 +17,19 @@ def parse_args(args_list: Optional[List[str]] = None) -> argparse.Namespace:
     doc_parser.add_argument("-a", "--author", help="Override author name")
     doc_parser.add_argument("--approved-by", help="Name of the approver for the 'Approved By' field")
     doc_parser.add_argument("-i", "--images", nargs="*", help="Explicit image file paths to include")
-    doc_parser.add_argument("-s", "--select-images", action="store_true", help="Open the interactive Preview Panel (GUI) to configure, attach screenshots via drag-and-drop, and export")
+    doc_parser.add_argument(
+        "-s", "--select-images", action="store_true",
+        help="Open the interactive Preview Panel (GUI). This is the default; kept for compatibility",
+    )
+    doc_parser.add_argument(
+        "--headless",
+        action="store_true",
+        help=(
+            "Write the document straight to disk without opening the Preview Panel. Use only for "
+            "automation/CI - by default the panel opens so the document can be reviewed and "
+            "screenshots attached before export"
+        ),
+    )
     doc_parser.add_argument(
         "--seed-file",
         dest="seed_file",

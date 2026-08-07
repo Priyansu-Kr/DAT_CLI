@@ -52,7 +52,7 @@ DAT_MCP_LOG_LEVEL=DEBUG dat mcp
 All MCP clients boil down to the same thing: a command to launch the server, plus (optionally) the working
 directory it should start in. Point `command` at `dat`, `args` at `["mcp"]`, and set `cwd` to the project you
 want it to operate on by default — you can always override the target repo per-call with the `repo_path`
-argument (see §4), which is the recommended approach if you work across multiple projects with one client.
+argument (see §5), which is the recommended approach if you work across multiple projects with one client.
 
 ### Claude Desktop
 
@@ -132,19 +132,40 @@ arguments. Use `command: "dat"`, `args: ["mcp"]`. If your client can't set a per
 
 ---
 
-## 4. Available tools
+## 4. The documentation workflow
+
+**Every** request to document work in a repo — *"generate a document"*, *"generate test cases and put
+them in a document"*, *"document this through DAT"*, with or without any mention of screenshots — runs
+the same three steps:
+
+1. **`get_git_summary`** — branch, ticket and diff context.
+2. **Author the content** — `key_points` (the code changes) and `test_cases` (concrete cases verifying
+   them), plus `impact_areas` / `overview`. The calling model does this, not DAT's AI.
+3. **`open_preview`** — opens the Preview Panel with that content, where the user reviews it, drags in
+   screenshots, and exports the DOCX themselves.
+
+This is enforced by the server, not left to prompt wording:
+
+- `open_preview` and `generate_document` **refuse to run** without `summary.key_points` and
+  `summary.test_cases`, returning guidance that tells the caller what to author and retry with.
+- `generate_document` additionally requires **`confirm_headless: true`**, so a plain "make me a
+  document" request can never quietly produce a `.docx`/`.md` file instead of opening the panel.
+
+Both refusals come back as normal tool errors, so an MCP client reads them and corrects itself.
+
+## 5. Available tools
 
 | Tool | What it does |
 |---|---|
-| `generate_document` | Generates a DOCX or Markdown PR/feature doc from the current git branch's diff, commits, and screenshots — headless, no GUI |
-| `open_preview` | Opens the interactive Preview Panel (GUI), pre-filled with your content, so a human can confirm it, drag-and-drop screenshots onto it, and export themselves |
+| `open_preview` | **The endpoint for any documentation request.** Opens the Preview Panel (GUI) pre-filled with your content, so the user confirms it, drags screenshots onto it, and exports themselves |
+| `generate_document` | **Headless only.** Writes a DOCX/Markdown file straight to disk with no review — requires `confirm_headless: true` |
 | `get_git_summary` | Returns branch name, inferred title/ticket ID, changed files, and recent commits |
 | `run_doctor` | Reports whether git/python-docx/PyYAML are available and configured |
 | `get_config` | Reads DAT's persisted configuration (author defaults, output dir, AI provider) — secrets are never returned, only whether they're set |
 
 ### Bring your own summary: the `summary` argument
 
-Both `generate_document` and `open_preview` accept an optional `summary` object. **You (the calling model) almost always have far more context on the actual change than DAT's own AI call over the raw diff could infer** — you've been in the conversation, you know which module changed and why. Fill this in yourself instead of leaving it to DAT:
+Both `generate_document` and `open_preview` take a `summary` object. **You (the calling model) almost always have far more context on the actual change than DAT's own AI call over the raw diff could infer** — you've been in the conversation, you know which module changed and why. Fill this in yourself instead of leaving it to DAT:
 
 | Field | Type | Description |
 |---|---|---|
@@ -154,11 +175,16 @@ Both `generate_document` and `open_preview` accept an optional `summary` object.
 | `test_recommendations` | string[] | High-level guidance on how to verify the change |
 | `test_cases` | string[] | Concrete, precise test case descriptions to verify the change |
 
-Any field you omit falls back to DAT's own AI generation for that field only. Omit `summary` entirely to let DAT generate everything itself, as before.
+`key_points` and `test_cases` are **required** by both document tools — the call is rejected with
+guidance if either is missing or empty. The remaining fields are optional and fall back to DAT's own
+AI generation for that field only.
 
 ### `generate_document`
 
-Headless: writes the file directly and returns its path. No human sees the content before it's final — use this when you're confident in the content and no screenshot needs attaching interactively.
+Headless: writes the file directly and returns its path. No human sees the content before it's final,
+so this is **not** the tool for a normal documentation request — use it only when the user explicitly
+asked for a file with no review (automation/CI), or as the fallback after `open_preview` reported that
+no graphical session is available.
 
 | Argument | Type | Default | Description |
 |---|---|---|---|
@@ -169,14 +195,16 @@ Headless: writes the file directly and returns its path. No human sees the conte
 | `approved_by` | string | *(empty)* | Name for the "Approved By" field |
 | `images` | string[] | *(none)* | Local screenshot paths to embed, in order |
 | `summary` | object | *(none)* | AI-authored content — see above. Omitted fields fall back to DAT's own AI generation |
-| `output_format` | `"docx"` \| `"md"` | `"docx"` | Output format |
+| `output_format` | `"docx"` \| `"md"` | `"docx"` | Output format — leave as `docx` unless Markdown was explicitly asked for |
+| `confirm_headless` | boolean | `false` | **Required.** Acknowledges that the user wants a file with no review |
 | `repo_path` | string | server's cwd | Absolute path to the target git repository |
 
-Example prompt: *"Generate a Markdown PR doc for the current branch and save it as `PR.md`."*
+Example prompt: *"Write a Markdown PR doc straight to `PR.md` without opening the panel."*
 
 ### `open_preview`
 
-Opens DAT's desktop Preview Panel pre-filled with the supplied `title`/`ticket`/`author`/`summary`, so a human can visually confirm the content, drag-and-drop screenshot files onto it from anywhere on disk (no folder or naming convention required), and click Export themselves. This is the recommended flow whenever a human should see and confirm AI-authored content — or attach a screenshot — before the document is final.
+Opens DAT's desktop Preview Panel pre-filled with the supplied `title`/`ticket`/`author`/`summary`, so a human can visually confirm the content, drag-and-drop screenshot files onto it from anywhere on disk (no folder or naming convention required), and click Export themselves. This is how every documentation request finishes — a screenshot going unmentioned is not a reason to
+skip it.
 
 | Argument | Type | Default | Description |
 |---|---|---|---|
@@ -211,7 +239,7 @@ Example prompt: *"Does my environment have everything DAT needs to generate docs
 
 ---
 
-## 5. Working across multiple projects
+## 6. Working across multiple projects
 
 An MCP client typically launches one `dat mcp` process per configured server entry, started with whatever
 `cwd` you gave it (or the client's own working directory if you didn't). If you jump between repositories,
@@ -224,7 +252,7 @@ you have two options:
 
 ---
 
-## 6. Troubleshooting
+## 7. Troubleshooting
 
 - **"Server not initialized" error** — the client didn't send the MCP `initialize` handshake first. This
   indicates a client bug, not a DAT issue; the server rejects `tools/list`/`tools/call` before `initialize`
@@ -247,7 +275,7 @@ you have two options:
 
 ---
 
-## 7. Design & security notes
+## 8. Design & security notes
 
 - **Transport**: newline-delimited JSON-RPC 2.0 over stdio, implementing the MCP `initialize` handshake,
   `ping`, `tools/list`, and `tools/call` methods, plus the `notifications/initialized` and

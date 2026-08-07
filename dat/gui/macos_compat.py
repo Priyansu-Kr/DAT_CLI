@@ -50,6 +50,15 @@ def _fix_window_focus() -> None:
 
     _original_lift = tk.Misc.lift
 
+    def _drop_topmost(window) -> None:
+        # Runs a tick later, by which point the window may already be gone
+        # (a builder opened and closed quickly). Unguarded, that surfaces as
+        # an "Exception in Tkinter callback" traceback on macOS only.
+        try:
+            window.attributes("-topmost", False)
+        except tk.TclError:
+            pass
+
     def _lift_and_focus(self, aboveThis=None):
         _original_lift(self, aboveThis)
         # lift() is called on ordinary widgets too, not just windows -
@@ -59,7 +68,7 @@ def _fix_window_focus() -> None:
             return
         try:
             self.attributes("-topmost", True)
-            self.after(0, lambda: self.attributes("-topmost", False))
+            self.after(0, lambda: _drop_topmost(self))
             self.focus_force()
         except tk.TclError:
             pass

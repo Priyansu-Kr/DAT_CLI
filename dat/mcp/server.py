@@ -48,20 +48,36 @@ LATEST_PROTOCOL_VERSION = SUPPORTED_PROTOCOL_VERSIONS[0]
 
 SERVER_NAME = "dat-mcp-server"
 SERVER_INSTRUCTIONS = (
-    "DAT (Developer Automation Toolkit) exposes git-aware PR/feature "
-    "documentation generation and environment diagnostics as tools. Call "
-    "'get_git_summary' to see the "
-    "current repo's branch/ticket/diff context. Then, since you (the "
-    "calling model) almost always have far more context on the actual "
-    "change than a fresh AI call over the raw diff could infer, write your "
-    "own 'summary' (key_points/impact_areas/test_cases) and pass it to "
-    "'generate_document' for a one-shot headless DOCX/Markdown file, or to "
-    "'open_preview' to show it to the user in DAT's GUI first so they can "
-    "confirm it, attach screenshots by drag-and-drop, and export themselves "
-    "- prefer 'open_preview' whenever a human should see the content before "
-    "it's final. Use 'run_doctor' if a tool call fails with a "
+    "DAT (Developer Automation Toolkit) turns the current git branch into "
+    "reviewable PR/feature documentation.\n\n"
+    "EVERY request to document work in this repository follows the same "
+    "three steps - 'generate a document', 'create documentation with test "
+    "cases', 'document this through DAT', 'make a doc for these changes', "
+    "with or without any mention of screenshots:\n"
+    "  1. Call 'get_git_summary' for the branch, ticket and diff context.\n"
+    "  2. Author the content yourself: 'key_points' (the code changes that "
+    "were made) and 'test_cases' (concrete cases that verify them), plus "
+    "'impact_areas' and 'overview'. You have far more context on the change "
+    "than a fresh AI pass over the raw diff, so never leave these blank for "
+    "DAT to guess.\n"
+    "  3. Call 'open_preview' with that summary. It opens DAT's Preview "
+    "Panel so the user reviews the content, drags in screenshots, and "
+    "exports the DOCX themselves.\n\n"
+    "'open_preview' is how a documentation request ends. Do not finish by "
+    "writing a file instead - screenshots being unmentioned is not a reason "
+    "to skip the panel. 'generate_document' exists only for an explicitly "
+    "headless file (no review, e.g. CI) and refuses to run without "
+    "confirm_headless: true. Use 'run_doctor' if a call fails with a "
     "missing-dependency error."
 )
+
+# Content the calling model must author itself before DAT will build a
+# document: the code changes made, and the test cases that verify them.
+REQUIRED_SUMMARY_FIELDS: Tuple[str, ...] = ("key_points", "test_cases")
+_SUMMARY_FIELD_LABELS: Dict[str, str] = {
+    "key_points": "key_points (the code changes that were made)",
+    "test_cases": "test_cases (concrete cases that verify those changes)",
+}
 
 
 def _resolve_server_version() -> str:
@@ -121,6 +137,39 @@ _SUMMARY_INPUT_SCHEMA: Dict[str, Any] = {
         },
     },
 }
+
+
+class ToolInputError(Exception):
+    """The call was well-formed, but the caller must supply/do something first.
+
+    Reported to the client as a tool error carrying the guidance verbatim
+    (no "tool crashed" wrapper), so the model can correct itself and retry -
+    which is how the required workflow stays enforced rather than merely
+    documented.
+    """
+
+
+def _require_authored_content(args: Dict[str, Any], tool_name: str) -> None:
+    """Step 2 of the workflow, enforced: the model writes the content.
+
+    Without this the model can hand DAT an empty summary and ship a document
+    whose "Changes Done" and "Test Cases" were guessed from the raw diff.
+    """
+    summary = args.get("summary")
+    if not isinstance(summary, dict):
+        summary = {}
+    missing = [field for field in REQUIRED_SUMMARY_FIELDS if not summary.get(field)]
+    if not missing:
+        return
+
+    raise ToolInputError(
+        f"'{tool_name}' needs the document's content first. Missing: "
+        + "; ".join(_SUMMARY_FIELD_LABELS[field] for field in missing)
+        + ". Read the change (call 'get_git_summary', and use what you already know from this "
+        "conversation), then call this tool again with a 'summary' object containing "
+        "key_points and test_cases - plus impact_areas and overview where you can. "
+        "Do not leave them empty for DAT to guess."
+    )
 
 
 def _build_change_summary(summary_args: Optional[Dict[str, Any]]) -> Optional[ChangeSummary]:
@@ -312,10 +361,13 @@ class DATMCPServer:
             {
                 "name": "generate_document",
                 "description": (
-                    "Generates DOCX or Markdown PR/feature documentation from the "
-                    "current git branch's diff, commit history, and screenshots. "
-                    "Title/ticket/author are inferred from the branch name unless "
-                    "overridden."
+                    "HEADLESS ONLY - writes a DOCX/Markdown file straight to disk with no review. "
+                    "This is NOT the tool for a normal 'generate a document' request: those must end "
+                    "in 'open_preview' so the user can check the content, attach screenshots and "
+                    "export themselves. Refuses to run unless confirm_headless is true, and requires "
+                    "summary.key_points and summary.test_cases. Use it only when the user explicitly "
+                    "asked for a file with no review (e.g. automation/CI), or as the fallback after "
+                    "'open_preview' reported that no graphical session is available."
                 ),
                 "inputSchema": {
                     "type": "object",
@@ -338,7 +390,20 @@ class DATMCPServer:
                             "type": "string",
                             "enum": ["docx", "md"],
                             "default": "docx",
-                            "description": "Output document format.",
+                            "description": (
+                                "Output document format. Leave as 'docx' unless the user explicitly "
+                                "asked for Markdown."
+                            ),
+                        },
+                        "confirm_headless": {
+                            "type": "boolean",
+                            "default": False,
+                            "description": (
+                                "Required acknowledgement that the user wants a file written with no "
+                                "review in DAT's Preview Panel. Set true ONLY when they explicitly "
+                                "asked for that, or when 'open_preview' already failed for lack of a "
+                                "graphical session."
+                            ),
                         },
                         "repo_path": {
                             "type": "string",
@@ -351,16 +416,18 @@ class DATMCPServer:
             {
                 "name": "open_preview",
                 "description": (
-                    "Opens DAT's interactive Preview Panel (a desktop GUI window), pre-filled with the "
-                    "supplied title/ticket/author/summary content, so a human can visually confirm it, "
-                    "drag-and-drop screenshots onto it from anywhere on disk (no folder/naming convention "
-                    "required), and export the final DOCX themselves. This call returns as soon as the "
-                    "window has launched - it does NOT wait for the user to finish reviewing, attaching "
-                    "screenshots, or exporting, and it does not return a final file path. Requires a "
-                    "graphical session (a local desktop on macOS/Linux, or an X11/Wayland-forwarded "
-                    "display on a remote VM) - if none is available this call fails fast with an error "
-                    "instead of hanging. Prefer this over 'generate_document' whenever a human should see "
-                    "and confirm the content, or needs to attach a screenshot, before the document is final."
+                    "THE way to fulfil any documentation request for this repo - 'generate a document', "
+                    "'create documentation', 'generate test cases and put them in a document', 'document "
+                    "this through DAT' - whether or not the user mentions screenshots. Opens DAT's "
+                    "Preview Panel (a desktop GUI window) pre-filled with your summary, where the user "
+                    "reviews the Changes Done / Test Cases content, drags in screenshots from anywhere on "
+                    "disk, and exports the final DOCX themselves. Requires summary.key_points (the code "
+                    "changes) and summary.test_cases (cases verifying them) - author them yourself before "
+                    "calling. Returns as soon as the window launches: it does NOT wait for the user and "
+                    "returns no final file path, so report that the panel is open rather than claiming a "
+                    "file was produced. Needs a graphical session (local desktop, or forwarded X11/Wayland "
+                    "on a remote VM); if none is available it fails fast, and only then fall back to "
+                    "'generate_document' with confirm_headless: true."
                 ),
                 "inputSchema": {
                     "type": "object",
@@ -566,6 +633,12 @@ class DATMCPServer:
         try:
             with contextlib.redirect_stdout(stdout_buffer):
                 data = handler(arguments)
+        except ToolInputError as exc:
+            # Actionable guidance, not a failure: pass it through verbatim so
+            # the model reads an instruction rather than a stack-trace-ish
+            # "tool crashed" message, and retries correctly.
+            logger.info("Tool '%s' rejected the call: %s", tool_name, exc)
+            return {"content": [{"type": "text", "text": str(exc)}], "isError": True}
         except Exception as exc:
             logger.exception("Tool '%s' raised during execution", tool_name)
             return {"content": [{"type": "text", "text": f"Error executing tool '{tool_name}': {exc}"}], "isError": True}
@@ -579,6 +652,19 @@ class DATMCPServer:
     # --- Tool implementations ------------------------------------------------
 
     def _tool_generate_document(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        # Writing a file straight to disk skips the review the user expects
+        # from a documentation request, so it has to be asked for explicitly.
+        if not args.get("confirm_headless"):
+            raise ToolInputError(
+                "A documentation request ends in DAT's Preview Panel, so the user can review the "
+                "content, drag in screenshots and export the DOCX themselves: call 'open_preview' "
+                "with your summary instead. Use 'generate_document' only when the user explicitly "
+                "asked for a file written straight to disk with no review, or when 'open_preview' "
+                "already failed because no graphical session is available - and then pass "
+                "confirm_headless: true."
+            )
+        _require_authored_content(args, "generate_document")
+
         output_file = self.container.document_service.generate_documentation(
             output_path=args.get("output_path"),
             title_override=args.get("title"),
@@ -593,6 +679,8 @@ class DATMCPServer:
         return {"status": "success", "file_path": output_file}
 
     def _tool_open_preview(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        _require_authored_content(args, "open_preview")
+
         repo_path = args.get("repo_path") or os.getcwd()
         if not os.path.isdir(repo_path):
             raise RuntimeError(f"repo_path '{repo_path}' is not a directory")

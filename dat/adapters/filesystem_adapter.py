@@ -1,5 +1,6 @@
 import os
 import shutil
+import tempfile
 from typing import Optional, List
 
 class FilesystemAdapter:
@@ -31,6 +32,33 @@ class FilesystemAdapter:
             self.ensure_dir(dst_dir)
         with open(path, "w", encoding="utf-8") as f:
             f.write(content)
+
+    def write_text_atomic(self, path: str, content: str) -> None:
+        """Write via a temp file + rename so a crash/full disk mid-write can
+        never leave a half-written (unparseable) file behind."""
+        dst_dir = os.path.dirname(path) or "."
+        self.ensure_dir(dst_dir)
+        fd, tmp_path = tempfile.mkstemp(dir=dst_dir, prefix=".tmp-", suffix=".part")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(content)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, path)
+        except BaseException:
+            if os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+            raise
+
+    def remove_file(self, path: str) -> bool:
+        try:
+            os.remove(path)
+            return True
+        except FileNotFoundError:
+            return False
 
     def list_files(self, dir_path: str, extensions: Optional[List[str]] = None) -> List[str]:
         if not self.exists(dir_path):

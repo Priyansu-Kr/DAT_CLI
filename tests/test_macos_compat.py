@@ -74,13 +74,14 @@ class TestDarkdetectGuard(MacOSShimTestCase):
 class FakeWindow(tk.Wm):
     """Enough of a Toplevel for the lift() patch, without a display."""
 
-    def __init__(self, destroyed_after_first_call=False):
+    def __init__(self, destroyed_after_first_call=False, focused_child=None):
         self.tk = mock.Mock()
         self._w = "."
         self.attribute_calls = []
         self.deferred = None
         self.focused = False
         self._destroyed_after_first_call = destroyed_after_first_call
+        self._focused_child = focused_child
 
     def attributes(self, *args):
         self.attribute_calls.append(args)
@@ -92,6 +93,9 @@ class FakeWindow(tk.Wm):
 
     def focus_force(self):
         self.focused = True
+
+    def focus_get(self):
+        return self._focused_child
 
 
 class TestWindowFocusPatch(MacOSShimTestCase):
@@ -127,6 +131,23 @@ class TestWindowFocusPatch(MacOSShimTestCase):
         lift(window)
 
         window.deferred()  # must swallow the TclError
+
+    def test_does_not_steal_focus_from_an_already_focused_child(self):
+        """customtkinter's CTk/CTkToplevel bind <FocusIn> -> lift() on macOS
+        (ctk_tk.py/_focus_in_event), which fires whenever a child widget -
+        an Entry, a Textbox - takes focus, not just when the window itself
+        was reactivated. Forcing focus onto the window in that case rips it
+        straight back off the field the user just clicked into, so nothing
+        typed ever lands ("can't type in any field")."""
+        lift = self._patched_lift()
+        clicked_entry = mock.Mock()
+        window = FakeWindow(focused_child=clicked_entry)
+
+        lift(window)
+
+        self.assertFalse(window.focused, "focus_force() must not run when a child already has focus")
+        # Restacking above other windows must still happen either way.
+        self.assertEqual(window.attribute_calls[0], ("-topmost", True))
 
     def test_ordinary_widgets_are_untouched(self):
         lift = self._patched_lift()

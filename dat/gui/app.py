@@ -49,16 +49,32 @@ AUTOSAVE_MAX_WAIT_MS = 5000
 def _patch_scrollable_frame_string_widget_bug() -> None:
     """Some Linux/VM Tk builds deliver `event.widget` as the widget's string
     path name instead of the resolved widget object during mouse-wheel
-    events. CTkScrollableFrame._check_if_valid_scroll always expects an
-    object and crashes with `AttributeError: 'str' object has no attribute
-    'master'`. Resolve the string via nametowidget() before delegating to
-    the original logic.
+    events. CTkScrollableFrame.check_if_master_is_canvas recurses on
+    `widget.master` and crashes with `AttributeError: 'str' object has no
+    attribute 'master'`. Resolve the string via nametowidget() before
+    delegating to the original logic.
+
+    The method's name (and its presence) has moved between customtkinter
+    releases - it was `_check_if_valid_scroll` in some versions, and is
+    `check_if_master_is_canvas` in 5.2.2. Patch whichever exists; do nothing
+    if neither does, rather than crashing the whole GUI at import time.
     """
-    original = ctk.CTkScrollableFrame._check_if_valid_scroll
+    method_name = next(
+        (
+            name
+            for name in ("check_if_master_is_canvas", "_check_if_valid_scroll")
+            if hasattr(ctk.CTkScrollableFrame, name)
+        ),
+        None,
+    )
+    if method_name is None:
+        return
+
+    original = getattr(ctk.CTkScrollableFrame, method_name)
     if getattr(original, "_dat_string_widget_patched", False):
         return
 
-    def _check_if_valid_scroll(self, widget):
+    def _patched(self, widget):
         if isinstance(widget, str):
             try:
                 widget = self.nametowidget(widget)
@@ -66,8 +82,8 @@ def _patch_scrollable_frame_string_widget_bug() -> None:
                 return False
         return original(self, widget)
 
-    _check_if_valid_scroll._dat_string_widget_patched = True
-    ctk.CTkScrollableFrame._check_if_valid_scroll = _check_if_valid_scroll
+    _patched._dat_string_widget_patched = True
+    setattr(ctk.CTkScrollableFrame, method_name, _patched)
 
 
 _patch_scrollable_frame_string_widget_bug()
@@ -185,6 +201,14 @@ class DATGuiApp(*_DND_MIXIN):
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self._register_macos_quit_handler()
+        # Launched from a terminal, macOS often shows this window without
+        # giving it real keyboard focus at the OS level - it's visible but
+        # not the "key" window, so nothing typed reaches any field until the
+        # user clicks elsewhere and back. macos_compat's lift() patch (a
+        # no-op on other platforms) fixes this, but only for windows that
+        # actually call lift(); TemplateBuilderWindow does this for itself
+        # (see _focus_window there) and the root window needs the same.
+        self.after(100, self._focus_window)
 
         if image_paths:
             screenshots = self.container.screenshot_service.process_local_images(image_paths)
@@ -637,6 +661,13 @@ class DATGuiApp(*_DND_MIXIN):
         self._closing = True
         self._cancel_pending_jobs()
         super().destroy()
+
+    def _focus_window(self) -> None:
+        try:
+            self.lift()
+            self.focus_force()
+        except Exception:
+            pass
 
     def run(self):
         self.mainloop()

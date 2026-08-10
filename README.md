@@ -25,7 +25,65 @@
 *   **Python 3.9+**
 *   **Git**
 
-### Automated Setup (Recommended)
+Pick **one** of the two paths below. Install from PyPI if you just want to *use*
+DAT; install from source if you intend to change its code.
+
+### Option A — Install from PyPI (Recommended)
+
+DAT is published on PyPI as
+[`developer-automation-toolkit`](https://pypi.org/project/developer-automation-toolkit/).
+
+**One-line setup.** This script installs the package, adds the system Tk
+libraries pip cannot provide, puts `dat` on your PATH and runs a health check:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Priyansu-Kr/DAT_CLI/main/install.sh -o install.sh
+bash install.sh
+source ~/.bashrc     # macOS: source ~/.zshrc
+```
+
+<details>
+<summary><b>Or do the same four steps by hand</b></summary>
+
+1.  **Install the Tk system libraries.** The Preview Panel is a Tk GUI, and
+    `tkinter` only ever comes from your OS packages — never from PyPI:
+    ```bash
+    sudo apt install -y python3-tk     # Debian/Ubuntu
+    brew install python-tk             # macOS (Homebrew)
+    ```
+    Confirm with `python3 -c "import tkinter"` — silence means success.
+
+2.  **Install DAT:**
+    ```bash
+    pip install --user --upgrade developer-automation-toolkit
+    ```
+    If pip refuses with an *externally-managed-environment* error, your Python
+    follows PEP 668; use `pipx install developer-automation-toolkit` instead.
+
+3.  **Put `dat` on your PATH.** `pip install --user` writes the launcher to
+    `~/.local/bin`, which many distros leave off PATH. If `which dat` prints
+    nothing:
+    ```bash
+    echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+    source ~/.bashrc
+    ```
+
+4.  **Verify:**
+    ```bash
+    dat doctor
+    ```
+</details>
+
+You do **not** need to clone the repository or run `setup.sh` for this path —
+pip generates a real `dat` executable, so there is no alias to configure.
+
+**Upgrading later:**
+```bash
+pip install --user --upgrade developer-automation-toolkit
+```
+
+### Option B — Install from source (for contributors)
+
 This toolkit includes a universal setup script that works on **Linux (Ubuntu/Debian)** and **macOS**.
 
 1.  **Clone the repository:**
@@ -39,6 +97,8 @@ This toolkit includes a universal setup script that works on **Linux (Ubuntu/Deb
     chmod +x setup.sh
     ./setup.sh
     ```
+    This creates a virtualenv, installs DAT in editable mode (`pip install -e .`)
+    so your edits take effect immediately, and adds a `dat` alias to your shell.
 
 3.  **Refresh your terminal:**
     -   **Linux:** `source ~/.bashrc`

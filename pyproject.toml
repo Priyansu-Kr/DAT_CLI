@@ -23,6 +23,26 @@ dependencies = [
     "tkinterdnd2>=0.4.0"
 ]
 
+keywords = ["cli", "automation", "documentation", "mcp", "docx"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Documentation",
+]
+
+[project.urls]
+Homepage = "https://github.com/Priyansu-Kr/DAT_CLI"
+Repository = "https://github.com/Priyansu-Kr/DAT_CLI"
+Issues = "https://github.com/Priyansu-Kr/DAT_CLI/issues"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0.0",
@@ -30,3 +50,9 @@ dev = [
 
 [project.scripts]
 dat = "dat.main:main"
+
+[tool.setuptools.packages.find]
+include = ["dat*"]
+
+[tool.setuptools.package-data]
+dat = ["*.png"]

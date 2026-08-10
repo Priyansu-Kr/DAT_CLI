@@ -184,10 +184,35 @@ Any text field in a template can reference live values, resolved at render time:
 | `{{author}}` / `{{approved_by}}` | Created By / Approved By |
 | `{{branch}}` | Current git branch |
 | `{{date}}` | Document date |
-| `{{key_points}}` | AI key points, comma separated |
+| `{{key_points}}` | The changes made (AI-written, or the changed file names) |
 | `{{impact_areas}}` (or `{{modules}}`) | Affected modules |
+| `{{test_cases}}` | Test cases written by Gemini or by your MCP agent |
+| `{{test_recommendations}}` | Suggested QA steps |
+| `{{changed_files}}` | Files your branch touched |
+| `{{code_changes}}` | The code your branch **added**, per file |
+| `{{code_diff}}` | The same excerpt in patch form (`+`/`-`/`@@`) |
 
 Unknown tokens are left visible in the output so typos are easy to spot.
+
+**List tokens expand.** `{{key_points}}`, `{{test_cases}}`,
+`{{test_recommendations}}`, `{{changed_files}}` and `{{impact_areas}}` join with
+commas mid-sentence — but on their own in a **bullet item** or a **table cell**
+they become *one bullet (or row) per entry*. In a table row, `{{index}}` numbers
+them, which is all a Test Cases table needs:
+
+| Index | Case | Status |
+| --- | --- | --- |
+| `{{index}}` | `{{test_cases}}` | Success |
+
+An empty list contributes nothing rather than a blank bullet, and a table whose
+only row was an expansion is dropped entirely — so with no API key you get no
+half-empty Test Cases table, not a naked header row.
+
+**`{{code_changes}}` needs no API key.** It comes from your branch diff, not
+from a model, so a Code Block fills itself in every mode. It is bounded to keep
+a document readable: 8 files, 30 lines per file, 120 lines total, and whatever
+is cut is reported inline (`... 42 more changed line(s) in this file ...`)
+rather than silently dropped.
 
 The Control Center only offers the shared fields your document actually uses:
 **Created By** and **Approved By** belong to the built-in metadata table, so a

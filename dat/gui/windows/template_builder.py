@@ -44,7 +44,9 @@ from dat.models.template_model import (
     MIN_COL_WEIGHT,
     MIN_TABLE_COLS,
     PALETTE_GROUPS,
-    SUPPORTED_TOKENS,
+    CODE_TOKENS,
+    LIST_TOKENS,
+    VALUE_TOKENS,
     DocumentTemplate,
     TemplateBlock,
     TemplateContext,
@@ -67,6 +69,22 @@ CLOSE_SEQUENCES = ["<Command-w>"] if _IS_MACOS else []
 # Sidebar text budget: the scrollable frame is narrower than the sidebar
 # itself (padding + scrollbar), so labels wrap/truncate against this.
 SIDEBAR_TEXT_WRAP = 132
+
+
+def _token_help():
+    """(heading, token names, note) for the palette's token reference."""
+    return (
+        ("TOKENS", VALUE_TOKENS, ""),
+        (
+            "LIST TOKENS", LIST_TOKENS,
+            "Alone in a bullet item or table cell, these expand to one entry each "
+            "({{index}} numbers table rows).",
+        ),
+        (
+            "CODE", CODE_TOKENS,
+            "The code your branch changed, taken from git - no API key needed.",
+        ),
+    )
 
 
 def _relative_time(iso_value: str) -> str:
@@ -369,12 +387,20 @@ class TemplateBuilderWindow(ctk.CTkToplevel):
             ).pack(fill="x", padx=6, pady=theme.PADDING_MD)
             return
 
-        ctk.CTkLabel(
-            self.sidebar_scroll,
-            text="TOKENS\n" + ", ".join(f"{{{{{t}}}}}" for t in SUPPORTED_TOKENS),
-            anchor="w", justify="left", text_color=theme.TEXT_MUTED, wraplength=SIDEBAR_TEXT_WRAP + 40,
-            font=(theme.FONT_INTERFACE_FAMILY, theme.FONT_SIZE_LABEL - 3),
-        ).pack(fill="x", padx=6, pady=(theme.PADDING_MD, theme.PADDING_SM))
+        # Grouped by what the token does, because "expands into many bullets"
+        # and "substitutes one value" are not interchangeable in a layout - one
+        # flat list of names gave no way to tell which was which.
+        for heading, names, note in _token_help():
+            ctk.CTkLabel(
+                self.sidebar_scroll,
+                text=f"{heading}\n" + ", ".join(f"{{{{{name}}}}}" for name in names)
+                + (f"\n{note}" if note else ""),
+                anchor="w", justify="left", text_color=theme.TEXT_MUTED,
+                wraplength=SIDEBAR_TEXT_WRAP + 40,
+                font=(theme.FONT_INTERFACE_FAMILY, theme.FONT_SIZE_LABEL - 3),
+            ).pack(fill="x", padx=6, pady=(theme.PADDING_SM, 0))
+
+        ctk.CTkLabel(self.sidebar_scroll, text="").pack(pady=(0, theme.PADDING_SM))
 
     def _matches_search(self, spec) -> bool:
         if not self._search_term:

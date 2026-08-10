@@ -112,7 +112,9 @@ class TemplateDocxRenderer:
         elif kind == BLOCK_PARAGRAPH:
             self._add_paragraph(doc, context.resolve(block.text))
         elif kind == BLOCK_BULLET_LIST:
-            self._add_list(doc, [context.resolve(i) for i in block.items if i.strip()], block.ordered)
+            # resolve_items, not resolve: an item that is just {{test_cases}}
+            # becomes one bullet per test case (see TemplateContext).
+            self._add_list(doc, context.resolve_items(block.items), block.ordered)
         elif kind == BLOCK_TABLE:
             self._add_table(doc, block, context)
         elif kind == BLOCK_IMAGE:
@@ -163,8 +165,14 @@ class TemplateDocxRenderer:
             run.font.color.rgb = RGBColor(0, 0, 0)
 
     def _add_table(self, doc, block: TemplateBlock, context: TemplateContext) -> None:
-        rows = [[context.resolve(cell) for cell in row] for row in block.table_rows]
+        # resolve_rows, not resolve: a row holding {{test_cases}} expands into
+        # one row per case, numbered by {{index}}.
+        rows = context.resolve_rows(block.table_rows)
         headers = [context.resolve(h) for h in block.table_headers] if block.include_headers else []
+        if block.table_rows and not rows:
+            # Mirrors the preview: an all-expansion table with no entries to
+            # expand prints nothing, not a lone header row.
+            return
         col_count = len(headers) or (len(rows[0]) if rows else 0)
         if col_count == 0:
             return

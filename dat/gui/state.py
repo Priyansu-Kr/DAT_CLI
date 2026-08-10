@@ -136,6 +136,11 @@ class GuiState:
             key_points=list(self.summary.key_points),
             impact_areas=list(self.summary.impact_areas),
             test_cases=list(self.summary.test_cases),
+            test_recommendations=list(self.summary.test_recommendations),
+            # Straight from git, so {{changed_files}} and the code tokens work
+            # even with no AI provider configured.
+            changed_files=list(getattr(self.git_info, "changed_files", None) or []),
+            raw_diff=getattr(self.git_info, "raw_diff", "") or "",
         )
 
     # --- Editable AI-generated content ---------------------------------
@@ -323,15 +328,21 @@ def _template_block_to_preview(
         return PreviewBlock(kind="paragraph", text=context.resolve(block.text))
 
     if kind == BLOCK_BULLET_LIST:
-        items = [context.resolve(i) for i in block.items if i.strip()]
+        # resolve_items, not resolve: an item that is just {{test_cases}}
+        # becomes one bullet per test case.
+        items = context.resolve_items(block.items)
         if not items:
             return None
         return PreviewBlock(kind="bullet_list", bullets=items, ordered=block.ordered)
 
     if kind == BLOCK_TABLE:
-        rows = [[context.resolve(cell) for cell in row] for row in block.table_rows]
+        rows = context.resolve_rows(block.table_rows)
         headers = [context.resolve(h) for h in block.table_headers] if block.include_headers else []
         if not rows and not headers:
+            return None
+        if block.table_rows and not rows:
+            # Every row was an expansion that produced nothing (no test cases
+            # yet, say). A header row on its own is not a table worth printing.
             return None
         return PreviewBlock(
             kind="table",

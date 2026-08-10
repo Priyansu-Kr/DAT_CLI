@@ -117,6 +117,21 @@ def _as_str_list(value: Any) -> List[str]:
 
 
 _TOKEN_PATTERN = re.compile(r"\{\{\s*([a-zA-Z0-9_]+)\s*\}\}")
+# A field holding nothing but one token - that is what turns a list token into
+# one bullet (or one table row) per entry, rather than a comma-run of them all.
+_SOLE_TOKEN_PATTERN = re.compile(r"^\s*\{\{\s*([a-zA-Z0-9_]+)\s*\}\}\s*$")
+
+# Row-scoped: inside a table row being expanded by a list token, this numbers
+# the generated rows. Deliberately absent from tokens() - outside such a row
+# there is nothing to count, so it stays visible rather than resolving to "".
+INDEX_TOKEN = "index"
+
+# How much code the {{code_changes}} / {{code_diff}} tokens pull in. Far below
+# the AI's diff budget: this lands in a document a person has to read, so it is
+# an illustrative excerpt, not the whole patch.
+CODE_TOKEN_MAX_FILES = 8
+CODE_TOKEN_MAX_LINES_PER_FILE = 30
+CODE_TOKEN_MAX_TOTAL_LINES = 120
 
 
 def _tokens_in(text: Optional[str]) -> Set[str]:
@@ -409,9 +424,23 @@ def content_fields(block: TemplateBlock) -> List[ContentField]:
     if kind == BLOCK_PARAGRAPH:
         return [ContentField("text", "Paragraph", FIELD_MULTILINE, "Paragraph text")]
     if kind == BLOCK_BULLET_LIST:
-        return [ContentField("items", "List items", FIELD_LIST, "List item")]
+        return [
+            ContentField("items", "List items", FIELD_LIST, "List item"),
+            ContentField(
+                "", "", FIELD_NOTE,
+                "An item that is only {{test_cases}}, {{key_points}} or "
+                "{{changed_files}} expands into one bullet per entry.",
+            ),
+        ]
     if kind == BLOCK_TABLE:
-        return [ContentField("table", "Table cells", FIELD_TABLE)]
+        return [
+            ContentField("table", "Table cells", FIELD_TABLE),
+            ContentField(
+                "", "", FIELD_NOTE,
+                "A row holding {{test_cases}} (or another list token) becomes one "
+                "row per entry; put {{index}} in a cell to number them.",
+            ),
+        ]
     if kind == BLOCK_IMAGE:
         return [
             ContentField("image_path", "Image file", FIELD_PATH, "Image path"),
@@ -429,6 +458,12 @@ def content_fields(block: TemplateBlock) -> List[ContentField]:
         return [
             ContentField("language", "Language", FIELD_LINE, "e.g. python"),
             ContentField("text", "Code", FIELD_MULTILINE, "Code snippet"),
+            ContentField(
+                "", "", FIELD_NOTE,
+                "Use {{code_changes}} for the code your branch added, or "
+                "{{code_diff}} for it in patch form. Both come from git, so "
+                "they work without an API key.",
+            ),
         ]
     if kind == BLOCK_TWO_COLUMNS:
         return [
@@ -710,6 +745,100 @@ class DocumentTemplate:
         return cls(name=name, sections=[section])
 
 
+# --- Code excerpts from the diff -----------------------------------------
+
+def _file_sections(raw_diff: str) -> List[Tuple[str, List[str]]]:
+    """Split a unified diff into (path, lines) per file, in git's order."""
+    sections: List[Tuple[str, List[str]]] = []
+    path = ""
+    lines: List[str] = []
+
+    for line in (raw_diff or "").splitlines():
+        header = re.match(r"^diff --git a/(?P<a>.+?) b/(?P<b>.+)$", line)
+        if header:
+            if path:
+                sections.append((path, lines))
+            path = header.group("b") or header.group("a")
+            lines = []
+        elif path:
+            lines.append(line)
+
+    if path:
+        sections.append((path, lines))
+    return sections
+
+
+def _excerpt(
+    raw_diff: str,
+    keep,
+    clean,
+    max_files: int = CODE_TOKEN_MAX_FILES,
+    max_lines_per_file: int = CODE_TOKEN_MAX_LINES_PER_FILE,
+    max_total_lines: int = CODE_TOKEN_MAX_TOTAL_LINES,
+) -> str:
+    """Per-file excerpt of a diff, bounded on every axis.
+
+    ``keep`` decides which diff lines belong in the output and ``clean`` turns
+    one into its printed form - the only difference between the "just the new
+    code" and "the patch" views.
+    """
+    out: List[str] = []
+    budget = max_total_lines
+    sections = _file_sections(raw_diff)
+
+    for path, lines in sections[:max_files]:
+        if budget <= 0:
+            break
+        body = [clean(line) for line in lines if keep(line)]
+        if not body:
+            continue  # a mode change or a binary file: nothing to show
+
+        allowed = min(max_lines_per_file, budget)
+        shown, dropped = body[:allowed], len(body) - min(len(body), allowed)
+        budget -= len(shown)
+
+        # A separator rather than a comment: no comment syntax is right for
+        # every language a repository might hold.
+        out.append(f"==== {path} ====")
+        out.extend(shown)
+        if dropped:
+            out.append(f"... {dropped} more changed line(s) in this file ...")
+        out.append("")
+
+    remaining_files = max(0, len(sections) - max_files)
+    if remaining_files:
+        out.append(f"... and {remaining_files} more changed file(s) ...")
+
+    return "\n".join(out).strip()
+
+
+def added_code_from_diff(raw_diff: str, **limits) -> str:
+    """The code this branch *added*, per file, with the diff's '+' stripped.
+
+    Reads as source rather than as a patch, which is what a feature document
+    wants. Available whether or not an AI provider is configured - it comes
+    from git, not from a model.
+    """
+    return _excerpt(
+        raw_diff,
+        keep=lambda line: line.startswith("+") and not line.startswith("+++"),
+        clean=lambda line: line[1:],
+        **limits,
+    )
+
+
+def diff_excerpt(raw_diff: str, **limits) -> str:
+    """The same excerpt in patch form: additions, removals and hunk headers."""
+    return _excerpt(
+        raw_diff,
+        keep=lambda line: (
+            line.startswith(("+", "-", "@@")) and not line.startswith(("+++", "---"))
+        ),
+        clean=lambda line: line,
+        **limits,
+    )
+
+
 # --- Render context ------------------------------------------------------
 
 @dataclass
@@ -729,9 +858,32 @@ class TemplateContext:
     key_points: List[str] = field(default_factory=list)
     impact_areas: List[str] = field(default_factory=list)
     test_cases: List[str] = field(default_factory=list)
+    test_recommendations: List[str] = field(default_factory=list)
+    changed_files: List[str] = field(default_factory=list)
+    # The branch diff, so a Code Block can show the code that actually
+    # changed. Excerpted lazily - most templates never ask for it.
+    raw_diff: str = ""
+    _token_cache: Optional[Dict[str, str]] = field(
+        default=None, repr=False, compare=False
+    )
+
+    def list_tokens(self) -> Dict[str, List[str]]:
+        """Tokens whose value is a list, and can therefore expand into one
+        bullet or one table row per entry."""
+        return {
+            "key_points": list(self.key_points),
+            "impact_areas": list(self.impact_areas),
+            "modules": list(self.impact_areas),
+            "test_cases": list(self.test_cases),
+            "test_recommendations": list(self.test_recommendations),
+            "changed_files": list(self.changed_files),
+        }
 
     def tokens(self) -> Dict[str, str]:
-        return {
+        if self._token_cache is not None:
+            return self._token_cache
+
+        values = {
             "title": self.title,
             "ticket_id": self.ticket_id,
             "ticket": self.ticket_id,
@@ -740,10 +892,76 @@ class TemplateContext:
             "approved_by": self.approved_by,
             "branch": self.branch,
             "date": self.date,
-            "key_points": ", ".join(self.key_points),
-            "impact_areas": ", ".join(self.impact_areas),
-            "modules": ", ".join(self.impact_areas),
+            # Inline form: every list token also works mid-sentence.
+            **{name: ", ".join(items) for name, items in self.list_tokens().items()},
+            # Code straight from git - no AI provider involved.
+            "code_changes": added_code_from_diff(self.raw_diff),
+            "code_diff": diff_excerpt(self.raw_diff),
         }
+        # Cached because the code tokens re-parse the diff, and resolve() runs
+        # once per text field on every keystroke-driven preview refresh.
+        self._token_cache = values
+        return values
+
+    def expand_list(self, text: Optional[str]) -> Optional[List[str]]:
+        """The entries a field should become when it holds nothing but one list
+        token, else None (meaning: resolve it as ordinary text)."""
+        if not text:
+            return None
+        match = _SOLE_TOKEN_PATTERN.match(text)
+        if not match:
+            return None
+        return self.list_tokens().get(match.group(1).lower())
+
+    def resolve_items(self, items: List[str]) -> List[str]:
+        """Resolve list-field entries, expanding any that are a list token.
+
+        An empty list token contributes nothing rather than a blank bullet -
+        with no API key there are no test cases, and the document should simply
+        not carry an empty item.
+        """
+        resolved: List[str] = []
+        for item in items:
+            if not (item or "").strip():
+                continue
+            expanded = self.expand_list(item)
+            if expanded is None:
+                resolved.append(self.resolve(item))
+            else:
+                resolved.extend(entry for entry in expanded if entry.strip())
+        return resolved
+
+    def resolve_rows(self, rows: List[List[str]]) -> List[List[str]]:
+        """Resolve table rows, expanding a row that holds a list token into one
+        row per entry ({{index}} numbers them)."""
+        out: List[List[str]] = []
+
+        for row in rows:
+            position, entries = -1, None
+            for index, cell in enumerate(row):
+                expanded = self.expand_list(cell)
+                if expanded is not None:
+                    position, entries = index, expanded
+                    break
+
+            if entries is None:
+                out.append([self.resolve(cell) for cell in row])
+                continue
+
+            for number, entry in enumerate(entries, start=1):
+                out.append([
+                    entry if index == position
+                    else str(number) if self._is_token(cell, INDEX_TOKEN)
+                    else self.resolve(cell)
+                    for index, cell in enumerate(row)
+                ])
+
+        return out
+
+    @staticmethod
+    def _is_token(text: Optional[str], name: str) -> bool:
+        match = _SOLE_TOKEN_PATTERN.match(text or "")
+        return bool(match and match.group(1).lower() == name)
 
     def resolve(self, text: Optional[str]) -> str:
         """Substitute known tokens; unknown ones are left verbatim so a typo
@@ -760,3 +978,10 @@ class TemplateContext:
 
 
 SUPPORTED_TOKENS: Tuple[str, ...] = tuple(sorted(TemplateContext().tokens().keys()))
+
+# Grouped by behaviour, for anything that has to explain them to a user.
+LIST_TOKENS: Tuple[str, ...] = tuple(sorted(TemplateContext().list_tokens().keys()))
+CODE_TOKENS: Tuple[str, ...] = ("code_changes", "code_diff")
+VALUE_TOKENS: Tuple[str, ...] = tuple(
+    sorted(set(SUPPORTED_TOKENS) - set(LIST_TOKENS) - set(CODE_TOKENS))
+)

@@ -12,6 +12,7 @@ from dat.models.template_model import (
     BLOCK_PARAGRAPH,
     BLOCK_SEPARATOR,
     BLOCK_TABLE,
+    FIELD_NOTE,
     DocumentTemplate,
     TemplateBlock,
     TemplateSection,
@@ -242,7 +243,12 @@ class TestEditingActiveStructure(unittest.TestCase):
         ])
         editable = [b for b in section.blocks if has_editable_content(b)]
         self.assertEqual(len(editable), 3)
-        self.assertEqual(sum(len(content_fields(b)) for b in editable), 3)
+        # Inputs only: some blocks also carry FIELD_NOTE explanations (e.g. how
+        # {{test_cases}} expands), which are read-only and not fields to fill.
+        inputs = [
+            f for b in editable for f in content_fields(b) if f.kind != FIELD_NOTE
+        ]
+        self.assertEqual(len(inputs), 3)
 
 
 if __name__ == "__main__":

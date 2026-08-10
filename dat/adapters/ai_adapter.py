@@ -6,7 +6,7 @@ from dat.models.doc_request import ChangeSummary
 from dat.utils.diff_budget import pack_diff
 
 GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
-GEMINI_MODEL = "gemini-1.5-flash"
+GEMINI_MODEL = "gemini-3.5-flash-lite"
 GEMINI_MAX_OUTPUT_TOKENS = 2048
 # Separate connect/read timeouts: a dead host should fail fast, while a
 # large diff legitimately takes a while to summarise.

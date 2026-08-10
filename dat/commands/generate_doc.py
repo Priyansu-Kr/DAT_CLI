@@ -52,13 +52,22 @@ class GenerateDocCommand(BaseCommand):
                 if api_key:
                     # Update current session config
                     self.container.config.ai_api_key = api_key
+                    self.container.config.ai_provider = "gemini"
                     self.container.ai_service.adapter.api_key = api_key
+                    self.container.ai_service.adapter.provider = "gemini"
                     # Save it permanently so they aren't asked again
                     self.container.configuration_service.save_config(self.container.config)
                     console.print("[green]✔ API Key saved successfully.[/green]\n")
                 else:
                     console.print("[red]✘ Error: API Key is required to proceed.[/red]")
                     return ExitCode.VALIDATION_ERROR
+            elif self.container.config.ai_provider != "gemini":
+                # A key was saved by an older DAT version that never flipped
+                # ai_provider off its "rule-based" default - repair it now so
+                # existing installs actually start using the key they already have.
+                self.container.config.ai_provider = "gemini"
+                self.container.ai_service.adapter.provider = "gemini"
+                self.container.configuration_service.save_config(self.container.config)
 
         output_path = args.get("output")
         title_override = args.get("title") or seed_data.get("title")

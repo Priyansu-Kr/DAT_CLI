@@ -1,5 +1,5 @@
 import re
-from typing import Optional, List, Tuple
+from typing import Optional, Tuple
 from dat.adapters.git_adapter import GitAdapter
 from dat.models.git_info import GitInfo
 
@@ -35,7 +35,9 @@ class GitService:
             inferred_title, ticket_id, author_name = self.parse_branch_name(branch_name)
             repo_name = self.adapter.get_repo_name(cwd)
             changed_files = self.adapter.get_changed_files(cwd)
-            recent_commits = self.adapter.get_recent_commits(limit=5, cwd=cwd)
+            # This branch's own commits where the branch point is knowable,
+            # falling back to the most recent few - see get_branch_commits.
+            recent_commits = self.adapter.get_branch_commits(cwd)
             raw_diff = self.adapter.get_raw_diff(cwd)
 
             return GitInfo(

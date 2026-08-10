@@ -50,6 +50,15 @@ def _fix_window_focus() -> None:
 
     _original_lift = tk.Misc.lift
 
+    def _drop_topmost(window) -> None:
+        # Runs a tick later, by which point the window may already be gone
+        # (a builder opened and closed quickly). Unguarded, that surfaces as
+        # an "Exception in Tkinter callback" traceback on macOS only.
+        try:
+            window.attributes("-topmost", False)
+        except tk.TclError:
+            pass
+
     def _lift_and_focus(self, aboveThis=None):
         _original_lift(self, aboveThis)
         # lift() is called on ordinary widgets too, not just windows -
@@ -59,8 +68,17 @@ def _fix_window_focus() -> None:
             return
         try:
             self.attributes("-topmost", True)
-            self.after(0, lambda: self.attributes("-topmost", False))
-            self.focus_force()
+            self.after(0, lambda: _drop_topmost(self))
+            # customtkinter's own CTk/CTkToplevel bind <FocusIn> -> lift()
+            # on macOS (see ctk_tk.py/_focus_in_event), which fires every
+            # time a child widget (an Entry, a Textbox, ...) takes focus -
+            # not just when the window itself was reactivated from Mission
+            # Control. Forcing focus onto the *window* here unconditionally
+            # would immediately rip it back off whatever field the user just
+            # clicked into, making every field un-typable. Only steal focus
+            # onto the window when nothing inside it has focus already.
+            if self.focus_get() is None:
+                self.focus_force()
         except tk.TclError:
             pass
 

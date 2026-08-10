@@ -1,23 +1,29 @@
 from typing import List, Optional
-from dat.adapters.ai_adapter import AIAdapter
+from dat.adapters.ai_adapter import AIAdapter, build_git_diff_summary
 from dat.models.doc_request import ChangeSummary
 from dat.models.git_info import GitInfo
 
 
-def default_change_summary(title: Optional[str] = None) -> ChangeSummary:
-    """Fallback content used whenever AI summary generation fails outright,
-    so callers always have something sensible to show/export rather than
-    an empty gap."""
+def default_change_summary(
+    title: Optional[str] = None, changed_files: Optional[List[str]] = None
+) -> ChangeSummary:
+    """Fallback content used whenever summary generation fails outright, so
+    callers always have something sensible to show/export rather than an
+    empty gap.
+
+    Where the changed files are known this is exactly the Git-diff pillar's
+    output - real file names beat invented bullet points. Only a caller with
+    nothing at all to go on gets the "fill this in" placeholder."""
+    if changed_files:
+        return build_git_diff_summary(title or "these changes", changed_files)
+
     return ChangeSummary(
-        overview=f"AI summary unavailable for '{title}' - please fill in the details manually." if title
-        else "AI summary unavailable - please fill in the details manually.",
-        key_points=["Implemented core logic changes."],
-        impact_areas=["Main Module"],
-        test_recommendations=["Verify feature manually."],
-        test_cases=[
-            "Verify that core feature requirements are met",
-            "Ensure UI elements are displayed correctly",
-        ],
+        overview=f"Summary unavailable for '{title}' - please fill in the details manually." if title
+        else "Summary unavailable - please fill in the details manually.",
+        key_points=[],
+        impact_areas=[],
+        test_recommendations=[],
+        test_cases=[],
     )
 
 
@@ -40,4 +46,7 @@ class AIService:
             )
         except Exception as e:
             print(f"[Warning] AI summary generation failed, using defaults: {e}")
-            return default_change_summary(getattr(git_info, "inferred_title", None))
+            return default_change_summary(
+                getattr(git_info, "inferred_title", None),
+                getattr(git_info, "changed_files", None),
+            )

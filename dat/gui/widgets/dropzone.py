@@ -10,6 +10,7 @@ from typing import Callable, List, Optional
 import customtkinter as ctk
 
 from dat.gui import theme
+from dat.gui.text_fit import truncate_to_length
 from dat.models.screenshot_info import ScreenshotInfo
 
 try:
@@ -21,6 +22,7 @@ except ImportError:
 
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp", ".webp", ".gif")
 DEFAULT_ROW_HEIGHT = 36
+MAX_FILENAME_LENGTH = 12
 
 
 def _parse_dnd_paths(raw: str) -> List[str]:
@@ -80,7 +82,11 @@ class DropZone(ctk.CTkFrame):
         self.canvas.bind("<Configure>", self._draw_dashed_border)
         self.canvas.bind("<Button-1>", lambda _e: self._browse())
 
-        self._hint = "Drag & drop screenshots here" if _DND_AVAILABLE else "Click to browse screenshots"
+        # Set after registration is attempted: importing tkinterdnd2 can
+        # succeed while its native tkdnd library fails to load for this
+        # platform/Tcl build, and promising drag-and-drop that silently does
+        # nothing is worse than pointing at the Browse button.
+        self._hint = "Click to browse screenshots"
 
         self.browse_btn = ctk.CTkButton(
             self.canvas, text="Browse Files", width=120, height=28,
@@ -91,12 +97,16 @@ class DropZone(ctk.CTkFrame):
         self.list_frame = ctk.CTkScrollableFrame(self, fg_color="transparent", height=160)
         self.list_frame.pack(fill="both", expand=True, pady=(theme.PADDING_SM, 0))
 
+        self.drag_and_drop_active = False
         if _DND_AVAILABLE:
             try:
                 self.canvas.drop_target_register(DND_FILES)
                 self.canvas.dnd_bind("<<Drop>>", self._on_drop)
-            except Exception:
-                pass
+                self.drag_and_drop_active = True
+                self._hint = "Drag & drop screenshots here"
+            except Exception as e:
+                print(f"[Warning] Drag-and-drop unavailable, use Browse instead: {e}")
+        self._draw_dashed_border()
 
     def _draw_dashed_border(self, _event=None):
         self.canvas.delete("all")
@@ -119,6 +129,9 @@ class DropZone(ctk.CTkFrame):
         paths = ctk.filedialog.askopenfilenames(
             title="Select Screenshots",
             filetypes=[("Image files", "*.png *.jpg *.jpeg *.bmp *.webp *.gif")],
+            # parent= keeps the sheet attached to our window on macOS, where
+            # an unparented dialog can open behind the app.
+            parent=self.winfo_toplevel(),
         )
         if paths:
             self.on_files_added(list(paths))
@@ -164,13 +177,6 @@ class DropZone(ctk.CTkFrame):
         )
         handle.pack(side="left", padx=(8, 0), pady=6)
 
-        label = ctk.CTkLabel(
-            row, text=os.path.basename(shot.file_path), anchor="w",
-            text_color=theme.TEXT_PRIMARY,
-            font=(theme.FONT_INTERFACE_FAMILY, theme.FONT_SIZE_LABEL),
-        )
-        label.pack(side="left", fill="x", expand=True, padx=(6, 4), pady=6)
-
         current = "Auto" if shot.test_case_index is None else f"Test Case {shot.test_case_index + 1}"
         assign_menu = ctk.CTkOptionMenu(
             row, values=self._assignment_options(), width=118, height=24,
@@ -184,10 +190,18 @@ class DropZone(ctk.CTkFrame):
 
         remove_btn = ctk.CTkButton(
             row, text="✕", width=24, height=24, fg_color="transparent",
-            hover_color=theme.STATUS_ERROR, text_color=theme.TEXT_SECONDARY,
+            hover_color=theme.SURFACE_GREY, text_color=theme.STATUS_ERROR,
             command=lambda p=shot.file_path: self.on_file_removed(p),
         )
         remove_btn.pack(side="right", padx=(4, 10), pady=4)
+
+        filename = truncate_to_length(os.path.basename(shot.file_path), MAX_FILENAME_LENGTH)
+        label = ctk.CTkLabel(
+            row, text=filename, anchor="w",
+            text_color=theme.TEXT_PRIMARY,
+            font=(theme.FONT_INTERFACE_FAMILY, theme.FONT_SIZE_LABEL),
+        )
+        label.pack(side="left", fill="x", expand=True, padx=(6, 4), pady=6)
 
         for widget in (handle, row, label):
             widget.bind("<ButtonPress-1>", lambda e, i=idx: self._start_drag(i))

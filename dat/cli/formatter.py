@@ -7,7 +7,6 @@ COMMANDS = [
     ("dat generate-doc", "Generate DOCX/Markdown docs from git + AI"),
     ("dat generate-doc -s", "Open the interactive Preview Panel (GUI)"),
     ("dat gui", "Launch the DAT Control Center dashboard"),
-    ("dat screenshot", "Capture an Android screenshot via ADB"),
     ("dat doctor", "Run environment diagnostics"),
     ("dat config", "View or initialize configuration"),
 ]

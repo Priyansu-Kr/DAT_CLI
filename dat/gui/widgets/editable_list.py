@@ -36,9 +36,6 @@ class EditableListField(ctk.CTkFrame):
         self._values = list(values)
         self._rebuild()
 
-    def get_values(self) -> List[str]:
-        return list(self._values)
-
     def _rebuild(self) -> None:
         for child in self.rows_frame.winfo_children():
             child.destroy()

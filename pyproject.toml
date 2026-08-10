@@ -17,7 +17,10 @@ dependencies = [
     "pillow>=9.0.0",
     "requests>=2.25.1",
     "customtkinter>=5.2.0",
-    "tkinterdnd2>=0.3.0"
+    # 0.4+ is the first line shipping an osx-arm64 tkdnd binary; older
+    # releases install cleanly on Apple Silicon but fail to load at runtime,
+    # silently costing drag-and-drop.
+    "tkinterdnd2>=0.4.0"
 ]
 
 [project.optional-dependencies]

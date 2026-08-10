@@ -1,8 +1,12 @@
 import os
 import yaml
-from typing import Optional, Dict, Any
+from typing import Optional
 from dat.models.config_model import DATConfig
 from dat.adapters.filesystem_adapter import FilesystemAdapter
+
+# rw for the owner only (a no-op on filesystems without POSIX permissions).
+CONFIG_FILE_MODE = 0o600
+
 
 class ConfigurationService:
     def __init__(self, fs: Optional[FilesystemAdapter] = None):
@@ -20,7 +24,6 @@ class ConfigurationService:
                     if "author_name" in data: config.author_name = str(data["author_name"])
                     if "author_email" in data: config.author_email = str(data["author_email"])
                     if "default_output_dir" in data: config.default_output_dir = str(data["default_output_dir"])
-                    if "adb_path" in data: config.adb_path = str(data["adb_path"])
                     if "git_path" in data: config.git_path = str(data["git_path"])
                     if "ai_provider" in data: config.ai_provider = str(data["ai_provider"])
                     if "ai_api_key" in data: config.ai_api_key = str(data["ai_api_key"])
@@ -29,7 +32,9 @@ class ConfigurationService:
                 pass
         
         if os.getenv("DAT_AUTHOR"): config.author_name = os.getenv("DAT_AUTHOR")
-        if os.getenv("DAT_AI_KEY"): config.ai_api_key = os.getenv("DAT_AI_KEY")
+        if os.getenv("DAT_AI_KEY"):
+            config.ai_api_key = os.getenv("DAT_AI_KEY")
+            config.ai_key_from_env = True
 
         return config
 
@@ -39,12 +44,16 @@ class ConfigurationService:
             "author_name": config.author_name,
             "author_email": config.author_email,
             "default_output_dir": config.default_output_dir,
-            "adb_path": config.adb_path,
             "git_path": config.git_path,
             "ai_provider": config.ai_provider,
         }
-        if config.ai_api_key:
+        # A key supplied through $DAT_AI_KEY is not ours to write down - saving
+        # it would leave a copy on disk that outlives the environment that set
+        # it, and that the user never asked us to store.
+        if config.ai_api_key and not config.ai_key_from_env:
             data["ai_api_key"] = config.ai_api_key
         
         content = yaml.dump(data, default_flow_style=False)
-        self.fs.write_text(self.config_file, content)
+        # Owner-only: this file can hold an API key, and the default 0644 would
+        # expose it to every other account on a shared machine.
+        self.fs.write_text(self.config_file, content, mode=CONFIG_FILE_MODE)

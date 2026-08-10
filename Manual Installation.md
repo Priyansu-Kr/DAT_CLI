@@ -67,9 +67,20 @@ To run `dat` from any folder on your system without typing the full path:
 
 ---
 
-## 🔑 Step 4: AI Key Configuration
+## 🔑 Step 4: AI Key Configuration (Optional)
 
-To enable AI summaries, get a key from [Google AI Studio](https://aistudio.google.com/app/apikey) and add it to your shell config:
+DAT works without an API key: documents are then built from your Git diff, with
+the changed file names as the "Changes Done" section and test cases left for you
+to write.
+
+To enable AI-written summaries instead, get a key from
+[Google AI Studio](https://aistudio.google.com/app/apikey) and save it:
+
+```bash
+dat save-api-key    # prompts for the key and stores it in ~/.dat/config.yaml
+```
+
+Or keep it in your shell config, which DAT reads without ever writing it to disk:
 
 ```bash
 echo 'export DAT_AI_KEY="YOUR_KEY_HERE"' >> ~/.zshrc # or .bashrc

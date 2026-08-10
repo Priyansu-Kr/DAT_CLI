@@ -1,7 +1,6 @@
 from typing import Dict, List, Optional
 from dat.models.doc_request import DocRequest, ChangeSummary, DEFAULT_SECTIONS
 from dat.models.screenshot_info import ScreenshotInfo
-from dat.models.git_info import GitInfo
 from dat.services.git_service import GitService
 from dat.services.screenshot_service import ScreenshotService
 from dat.services.ai_service import AIService
@@ -31,7 +30,6 @@ class DocumentService:
         approved_by: str = "",
         ticket_override: Optional[str] = None,
         image_paths: Optional[List[str]] = None,
-        capture_adb: bool = False,
         output_format: str = "docx",
         cwd: Optional[str] = None,
         sections: Optional[Dict[str, bool]] = None,
@@ -56,13 +54,6 @@ class DocumentService:
             screenshots = []
             if image_paths:
                 screenshots.extend(self.screenshot_service.process_local_images(image_paths))
-
-            if capture_adb:
-                try:
-                    adb_shot = self.screenshot_service.capture_adb_screenshot()
-                    screenshots.append(adb_shot)
-                except Exception as e:
-                    print(f"[Warning] ADB screenshot capture failed: {e}")
 
         summary = summary_override if summary_override is not None else self.ai_service.generate_change_summary(git_info)
 

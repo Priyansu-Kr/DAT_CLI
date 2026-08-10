@@ -6,14 +6,15 @@
 
 ## 🚀 Core Features
 
--   **Automatic Document Generation**: Use `dat generate-doc` to create `.docx` or `.md` files.
+-   **Automatic Document Generation**: `dat generate-doc` builds the document and opens the Preview Panel to review and export it (`--headless` writes a `.docx`/`.md` straight to disk for automation).
 -   **Smart Git Analysis**: Automatically parses your current branch name (e.g., `feature/PROJECT-123-topic`) to infer Ticket IDs and professional titles.
 -   **AI-Powered Summaries**: Integrates with **Google Gemini** to read your `git diff` and write concise, professional "Changes Done" and "Test Case" summaries.
--   **Interactive Screenshot Selection**: Use the `-s` flag to open a native file picker window to select multiple screenshots from your computer.
+-   **Interactive Screenshot Selection**: Drag-and-drop screenshots onto the Preview Panel, or browse for them — you decide per document whether any are needed.
 -   **Smart Image Layout**: 
     *   **Mobile Screenshots**: Automatically groups tall images side-by-side (2 per row).
     *   **Web Screenshots**: Places wide images at full page width for maximum clarity.
 -   **Professional Templates**: Generates documents with a clean Arial-based layout, including Metadata Tables, Task Details, and Test Case sections.
+-   **Custom Document Templates**: Build your own document structure visually in the GUI — see [Custom Document Templates](#-custom-document-templates).
 -   **MCP Server**: Use `dat mcp` to expose DAT as tools to any MCP-compatible AI client (Claude Desktop, Claude Code, Cursor, etc.) — see [MCP Integration.md](MCP%20Integration.md).
 
 ---
@@ -45,18 +46,32 @@ This toolkit includes a universal setup script that works on **Linux (Ubuntu/Deb
 
 ---
 
-## 🔑 AI Configuration (Optional but Recommended)
+## 🔑 AI Configuration (Optional)
 
-To enable the professional AI-powered summaries, get a free API key from [Google AI Studio](https://aistudio.google.com/app/apikey) and add it to your system:
+A Gemini API key is **not required**. DAT can write a document's content three ways:
+
+| Content source | When it's used | "Changes Done" | Test cases |
+| --- | --- | --- | --- |
+| **Gemini AI** | A key is saved (or `$DAT_AI_KEY` is set) | Precise summary written from the branch diff | Written for you |
+| **An LLM / AI agent** | Your agent drives DAT through its [MCP server](./MCP%20Integration.md) | Authored by the agent | Authored by the agent |
+| **Git diff** | No key — the fallback | The file names your work touched | Left empty for you to fill in |
+
+The first time you run `dat generate-doc`, DAT asks once whether you have a key —
+answer **`n`** and it never asks again, generating documents from your Git diff.
+Answer **`y`** and it takes the key, checks its format and saves it.
+
+To add (or remove) a key at any time:
 
 ```bash
-# For Linux
-echo 'export DAT_AI_KEY="YOUR_KEY_HERE"' >> ~/.bashrc && source ~/.bashrc
-
-# For macOS
-echo 'export DAT_AI_KEY="YOUR_KEY_HERE"' >> ~/.zshrc && source ~/.zshrc
+dat save-api-key            # prompts for the key, then saves it
+dat save-api-key --clear    # forget the key and go back to Git-diff content
 ```
-*Note: If you don't set this, the tool will prompt you for it on the first run.*
+
+Get a free key from [Google AI Studio](https://aistudio.google.com/app/apikey).
+`$DAT_AI_KEY` also works if you prefer to keep the key in your shell config —
+DAT uses it but never copies it into `~/.dat/config.yaml`.
+
+Run `dat config` to see which source your documents currently use.
 
 ---
 
@@ -66,24 +81,194 @@ You can run `dat` from **any project folder** (Android, iOS, Web, etc.) once the
 
 ### Generate Feature Documentation
 ```bash
-# Generate doc and open window to select screenshots
-dat generate-doc -s
+# Build the document and open the Preview Panel to review it,
+# attach screenshots by drag-and-drop, and export (the default)
+dat generate-doc
 
-# Generate doc for specific local images
+# Pre-attach specific local images, then review in the panel
 dat generate-doc -i path/to/image1.png path/to/image2.png
+
+# Automation/CI only: write the file straight to disk with no review
+dat generate-doc --headless -o docs/feature.docx
 ```
+
+The Preview Panel is the default destination so nothing is exported before you
+have seen it and decided whether screenshots are needed. `--headless` is the
+explicit opt-out; if no graphical session is available the command says so and
+points at that flag rather than quietly writing a file.
 
 ### Other Commands
 ```bash
 # Check if your environment is set up correctly
 dat doctor
 
-# View current configuration
+# View current configuration (including which content source is active)
 dat config
+
+# Save a Gemini API key to enable AI-written summaries (or --clear to remove it)
+dat save-api-key
 
 # Start the MCP server (for AI client/IDE integration - see MCP Integration.md)
 dat mcp
 ```
+
+---
+
+## 🧩 Custom Document Templates
+
+Not every document fits the built-in layout. In the GUI (`dat gui`), the left
+panel has a **Custom Document** section:
+
+1.  **＋ Create Your Custom Doc** opens the Template Builder.
+2.  Build the document from the **Components** palette — Heading, Subheading,
+    Paragraph, Bullet List, Table, Image, Screenshots, Code Block, Two
+    Columns, Separator.
+3.  Group blocks into **Sections**. Each section can be reordered, hidden, and
+    can optionally print its title as a document heading.
+4.  **Layers** shows the document outline; **Preview** renders exactly what the
+    exported `.docx` will contain.
+5.  **Save Template** persists the structure and makes it the active document.
+
+Once a template is active:
+
+-   **Document Structure** in the left panel lists one show/hide switch per
+    template section — the same hide/show behaviour as the built-in layout.
+-   **Document Content** below it holds that structure's own components, ready
+    to fill in. Edits show up in the preview as you type and are saved
+    automatically — the preview rewrites the text of the widgets already on
+    screen rather than redrawing the page, so it never flickers or jumps.
+-   **Export DOCX** renders through the template.
+-   The template (and which one was active) is remembered, so reopening DAT
+    shows the same structure you built last time.
+
+Templates are stored as one JSON file per template in `~/.dat/templates/`.
+
+### Structure vs. content
+
+The split is deliberate, and it decides where each control lives:
+
+| | Set in | Example |
+| --- | --- | --- |
+| **Structure** | Template Builder | sections, block order, a table's **column** count, headings and widths |
+| **Content** | Control Center → Document Content | the text itself, list items, and a table's **rows** — add as many as you need with **+ Add Row**, or remove one with **✕** |
+
+So a table's columns are fixed when you design the document, while its rows
+grow as you fill it in — exactly like **+ Add Test Case** on the standard
+document.
+
+### Column widths
+
+Columns don't have to share the width evenly. Under each column heading in the
+builder is a **− % +** control that sets that column's *relative* width, so an
+Index / Case / Status table can be weighted 1 / 4 / 1:
+
+```
+Columns  − 3 +     ☑ Header row
+[Index]  [Case                        ]  [Status]
+− 17% +  −        67%                +   − 17% +
+```
+
+Widths are relative rather than fixed measurements, so the table stays correct
+in the preview, at any page size, and in the exported `.docx` (which is written
+with a fixed layout so Word keeps them instead of re-fitting to the text).
+
+### Dynamic tokens
+
+Any text field in a template can reference live values, resolved at render time:
+
+| Token | Value |
+| --- | --- |
+| `{{title}}` | Ticket ID + topic |
+| `{{ticket_id}}` (or `{{ticket}}`) | Ticket ID |
+| `{{topic}}` | Feature topic |
+| `{{author}}` / `{{approved_by}}` | Created By / Approved By |
+| `{{branch}}` | Current git branch |
+| `{{date}}` | Document date |
+| `{{key_points}}` | The changes made (AI-written, or the changed file names) |
+| `{{impact_areas}}` (or `{{modules}}`) | Affected modules |
+| `{{test_cases}}` | Test cases written by Gemini or by your MCP agent |
+| `{{test_recommendations}}` | Suggested QA steps |
+| `{{changed_files}}` | Files your branch touched |
+| `{{code_changes}}` | The code your branch **added**, per file |
+| `{{code_diff}}` | The same excerpt in patch form (`+`/`-`/`@@`) |
+
+Unknown tokens are left visible in the output so typos are easy to spot.
+
+**List tokens expand.** `{{key_points}}`, `{{test_cases}}`,
+`{{test_recommendations}}`, `{{changed_files}}` and `{{impact_areas}}` join with
+commas mid-sentence — but on their own in a **bullet item** or a **table cell**
+they become *one bullet (or row) per entry*. In a table row, `{{index}}` numbers
+them, which is all a Test Cases table needs:
+
+| Index | Case | Status |
+| --- | --- | --- |
+| `{{index}}` | `{{test_cases}}` | Success |
+
+An empty list contributes nothing rather than a blank bullet, and a table whose
+only row was an expansion is dropped entirely — so with no API key you get no
+half-empty Test Cases table, not a naked header row.
+
+**`{{code_changes}}` needs no API key.** It comes from your branch diff, not
+from a model, so a Code Block fills itself in every mode. It is bounded to keep
+a document readable: 8 files, 30 lines per file, 120 lines total, and whatever
+is cut is reported inline (`... 42 more changed line(s) in this file ...`)
+rather than silently dropped.
+
+The Control Center only offers the shared fields your document actually uses:
+**Created By** and **Approved By** belong to the built-in metadata table, so a
+custom structure hides them — unless it writes `{{author}}` or
+`{{approved_by}}`, in which case the field reappears so there is somewhere to
+type the value.
+
+---
+
+## 🔍 What the AI actually sees
+
+When DAT writes the summary itself (the `dat generate-doc` / GUI path), this is
+the evidence it works from:
+
+| | Source | Notes |
+| --- | --- | --- |
+| **Diff** | `git diff HEAD` + the content of new untracked files | Falls back to `<merge-base>..HEAD` — every commit on the branch — when the tree is clean, and to `HEAD~1..HEAD` only if there's no branch point |
+| **File list** | `git status --porcelain -uall` | Individual files, renames reported by destination |
+| **Commits** | `<merge-base>..HEAD` (up to 25) | This branch's own commits, not unrelated ones from `main` |
+
+The diff is packed to a character budget that is **shared across files**, so a
+20-file change is summarised from all 20 files rather than from whichever one
+git printed first. Whatever doesn't fit is named in the prompt, so the model
+can reference an omitted file without inventing its contents.
+
+Raise or lower the budget with an environment variable (default 200,000
+characters, roughly 50k tokens; ~150 files can each get a usable share):
+
+```bash
+export DAT_AI_DIFF_CHAR_BUDGET=400000
+```
+
+### Waiting, and what happens when it takes too long
+
+The Preview Panel opens with the Git-diff content already in it — the changed
+file names — and shows a *"Writing AI summary…"* chip while the model works.
+When the answer arrives the content is replaced; anything you typed in the
+meantime wins, and the AI text stays one click away.
+
+The answer deadline is **15 seconds**, growing by 5s per extra 100k characters
+of prompt, capped at 45s. Miss it and the document keeps the Git-diff content
+with a *"Retry AI"* action — nothing is left half-written. Pin the deadline if
+you'd rather wait (or fail faster):
+
+```bash
+export DAT_AI_TIMEOUT_SECONDS=60
+```
+
+New files matter here: `git diff` never shows untracked content, so without
+DAT reading them a brand-new screen or class would be listed by name with its
+code unseen. Binary and very large files are skipped, and your git index is
+never modified.
+
+None of this applies to the **MCP flow** — there the calling model authors
+`key_points` and `test_cases` from its own reading of the code, and DAT's AI
+provider isn't called at all.
 
 ---
 

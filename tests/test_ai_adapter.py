@@ -1,12 +1,19 @@
 import json
+import os
 import unittest
 from unittest import mock
 
 from dat.adapters.ai_adapter import (
+    AI_DEADLINE_BASE_SECONDS,
+    AI_DEADLINE_ENV_VAR,
+    AI_DEADLINE_MAX_SECONDS,
     GEMINI_CONNECT_TIMEOUT,
-    GEMINI_READ_TIMEOUT,
+    GEMINI_MAX_OUTPUT_TOKENS,
     AIAdapter,
+    deadline_for_diff,
+    resolve_ai_deadline,
 )
+from dat.models.config_model import AI_PROVIDER_GIT_DIFF
 
 
 def gemini_response(payload=None):
@@ -52,7 +59,11 @@ class TestGeminiRequest(unittest.TestCase):
     def test_request_has_a_timeout(self):
         """Without one, a hung connection blocks the CLI indefinitely."""
         _summary, call = self._call()
-        self.assertEqual(call.kwargs["timeout"], (GEMINI_CONNECT_TIMEOUT, GEMINI_READ_TIMEOUT))
+        connect, read = call.kwargs["timeout"]
+        self.assertEqual(connect, GEMINI_CONNECT_TIMEOUT)
+        # The read half is the answer deadline, so a small change gets the
+        # base wait rather than a minute-plus stall.
+        self.assertEqual(read, AI_DEADLINE_BASE_SECONDS)
 
     def test_api_key_travels_in_a_header_not_the_url(self):
         _summary, call = self._call()
@@ -79,13 +90,49 @@ class TestGeminiRequest(unittest.TestCase):
                 title="T", changed_files=[], commits=[], raw_diff="")
         self.assertEqual(summary.overview, "ok")
 
-    def test_network_failure_falls_back_to_rule_based(self):
+    def test_network_failure_falls_back_to_the_git_diff(self):
         with mock.patch("dat.adapters.ai_adapter.requests.post",
                         side_effect=OSError("connection reset")):
             summary = self.adapter.generate_summary(
-                title="Login", changed_files=["a.kt"], commits=[], raw_diff="")
+                title="Login", changed_files=["app/src/a.kt"], commits=[], raw_diff="")
         self.assertIn("Login", summary.overview)
-        self.assertTrue(summary.test_cases)
+        self.assertEqual(summary.key_points, ["a.kt"])
+        self.assertEqual(summary.test_cases, [])
+
+
+class TestAnswerDeadline(unittest.TestCase):
+    """A user watching the Preview Panel won't wait out a long stall, but a
+    big change still needs long enough to be summarised at all."""
+
+    def test_small_change_gets_the_short_base_deadline(self):
+        self.assertEqual(resolve_ai_deadline(12_000), AI_DEADLINE_BASE_SECONDS)
+
+    def test_deadline_grows_with_the_prompt(self):
+        small = resolve_ai_deadline(50_000)
+        large = resolve_ai_deadline(300_000)
+        self.assertGreater(large, small)
+
+    def test_deadline_is_capped(self):
+        self.assertEqual(resolve_ai_deadline(50_000_000), AI_DEADLINE_MAX_SECONDS)
+
+    def test_env_var_pins_the_deadline(self):
+        with mock.patch.dict(os.environ, {AI_DEADLINE_ENV_VAR: "7.5"}):
+            self.assertEqual(resolve_ai_deadline(12_000), 7.5)
+            self.assertEqual(resolve_ai_deadline(5_000_000), 7.5)
+
+    def test_junk_env_var_is_ignored(self):
+        for bad in ("abc", "0", "-5", ""):
+            with mock.patch.dict(os.environ, {AI_DEADLINE_ENV_VAR: bad}):
+                self.assertEqual(resolve_ai_deadline(1_000), AI_DEADLINE_BASE_SECONDS)
+
+    def test_diff_estimate_never_exceeds_the_packed_budget(self):
+        """The GUI predicts the deadline from the raw diff, which can be far
+        larger than what actually gets sent."""
+        huge = "x" * 5_000_000
+        self.assertEqual(deadline_for_diff(huge), resolve_ai_deadline(200_000))
+
+    def test_a_bigger_response_is_requested_than_a_single_screen(self):
+        self.assertGreaterEqual(GEMINI_MAX_OUTPUT_TOKENS, 4096)
 
 
 class TestPromptContents(unittest.TestCase):
@@ -136,41 +183,72 @@ class TestPromptContents(unittest.TestCase):
         self.assertIn("none", prompt)
 
 
-class TestAIAdapter(unittest.TestCase):
-    def test_rule_based_summary_with_kotlin_files(self):
-        adapter = AIAdapter(provider="rule-based")
-        summary = adapter.generate_summary(
-            title="Login Screen",
-            changed_files=["app/src/LoginActivity.kt", "app/res/layout/activity_login.xml"],
-            commits=["Added login form validation"],
-            raw_diff="+ fun validateEmail() {}"
-        )
-        self.assertIn("Login Screen", summary.overview)
-        self.assertTrue(len(summary.key_points) > 0)
-        self.assertTrue(len(summary.impact_areas) > 0)
-        self.assertTrue(len(summary.test_recommendations) > 0)
+class TestGitDiffPillar(unittest.TestCase):
+    """With no API key, the changed files ARE the content and nothing is
+    invented - the user writes the test cases themselves."""
 
-    def test_rule_based_summary_with_python_files(self):
-        adapter = AIAdapter(provider="rule-based")
-        summary = adapter.generate_summary(
-            title="API Refactor",
-            changed_files=["services/auth.py", "services/user.py"],
-            commits=["Refactored auth service"],
-            raw_diff=""
-        )
+    def _summary(self, **kwargs):
+        defaults = dict(title="Login Screen", changed_files=[], commits=[], raw_diff="")
+        defaults.update(kwargs)
+        return AIAdapter(provider=AI_PROVIDER_GIT_DIFF, api_key=None).generate_summary(**defaults)
+
+    def test_no_api_key_never_calls_gemini(self):
+        with mock.patch("dat.adapters.ai_adapter.requests.post") as post:
+            self._summary(changed_files=["a.py"])
+        self.assertFalse(post.called)
+
+    def test_changed_files_become_the_key_points(self):
+        summary = self._summary(changed_files=[
+            "app/src/main/java/com/x/service.kt",
+            "app/src/main/res/layout/activity_main.xml",
+        ])
+        self.assertEqual(summary.key_points, ["service.kt", "activity_main.xml"])
+
+    def test_test_cases_are_left_empty_for_the_user(self):
+        summary = self._summary(changed_files=["service.kt"])
+        self.assertEqual(summary.test_cases, [])
+        self.assertEqual(summary.test_recommendations, [])
+
+    def test_overview_names_the_feature_and_counts_the_files(self):
+        summary = self._summary(title="API Refactor", changed_files=["auth.py", "user.py"])
         self.assertIn("API Refactor", summary.overview)
-        self.assertTrue(any("Python" in pt for pt in summary.key_points))
+        self.assertIn("2 files", summary.overview)
 
-    def test_rule_based_summary_empty_files(self):
-        adapter = AIAdapter(provider="rule-based")
-        summary = adapter.generate_summary(
-            title="Empty Feature",
-            changed_files=[],
-            commits=[],
-            raw_diff=""
+    def test_single_file_reads_as_singular(self):
+        self.assertIn("1 file.", self._summary(changed_files=["auth.py"]).overview)
+
+    def test_same_named_files_in_different_modules_stay_distinguishable(self):
+        summary = self._summary(changed_files=[
+            "collector/src/Repository.kt",
+            "admin/src/Repository.kt",
+            "admin/src/Main.kt",
+        ])
+        # Grows leftwards only as far as it must: 'src/Repository.kt' would
+        # still be ambiguous, while Main.kt stays a bare name.
+        self.assertEqual(
+            summary.key_points,
+            ["collector/src/Repository.kt", "admin/src/Repository.kt", "Main.kt"],
         )
+
+    def test_no_changed_files_says_so_rather_than_inventing_content(self):
+        summary = self._summary(title="Empty Feature")
         self.assertIn("Empty Feature", summary.overview)
-        self.assertTrue(len(summary.key_points) > 0)
+        self.assertIn("No changed files", summary.overview)
+        self.assertEqual(summary.key_points, [])
+
+
+class TestSavedKeyAlwaysUsesGemini(unittest.TestCase):
+    def test_stale_provider_does_not_strand_a_configured_user(self):
+        """A key saved by an older DAT (provider still 'rule-based') must
+        still reach Gemini."""
+        adapter = AIAdapter(provider="rule-based", api_key="k" * 40)
+        with mock.patch("dat.adapters.ai_adapter.requests.post",
+                        return_value=gemini_response()) as post:
+            summary = adapter.generate_summary(
+                title="T", changed_files=["a.py"], commits=[], raw_diff="+x")
+
+        self.assertTrue(post.called)
+        self.assertEqual(summary.overview, "Did the thing.")
 
 if __name__ == "__main__":
     unittest.main()

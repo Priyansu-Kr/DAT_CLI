@@ -18,6 +18,10 @@ EXPORT_BUTTON_WIDTH = 160
 MIN_TITLE_WIDTH = 140
 # Breathing room between the title text and the Export button.
 TITLE_RIGHT_GUTTER = 16
+# The status chip's action button: never narrower than this, and this much
+# room around whatever label it is given.
+STATUS_ACTION_MIN_WIDTH = 96
+STATUS_ACTION_PADDING = 28
 
 
 class PreviewPanel(ctk.CTkFrame):
@@ -44,6 +48,24 @@ class PreviewPanel(ctk.CTkFrame):
             command=on_export,
         )
         self.export_btn.pack(side="right", padx=(theme.PADDING_MD, 0))
+
+        # Status strip: what the document's content is doing right now
+        # (waiting on the AI, fell back to the Git diff, ...) with an optional
+        # one-click action. Packed right-to-left before the titles for the
+        # same reason as the button above, and unpacked while idle so an empty
+        # chip never holds space open.
+        self.status_action_btn = ctk.CTkButton(
+            header, text="", width=STATUS_ACTION_MIN_WIDTH, height=30,
+            fg_color=theme.SURFACE_CARD, hover_color=theme.SURFACE_CARD_HOVER,
+            border_width=1, border_color=theme.BORDER_MUTED,
+            text_color=theme.TEXT_SECONDARY,
+            font=(theme.FONT_INTERFACE_FAMILY, theme.FONT_SIZE_LABEL - 1),
+            command=lambda: None,
+        )
+        self.status_label = ctk.CTkLabel(
+            header, text="", anchor="e", text_color=theme.TEXT_MUTED,
+            font=(theme.FONT_INTERFACE_FAMILY, theme.FONT_SIZE_LABEL - 1),
+        )
 
         self.titles = ctk.CTkFrame(header, fg_color="transparent")
         self.titles.pack(side="left", fill="x", expand=True)
@@ -112,6 +134,48 @@ class PreviewPanel(ctk.CTkFrame):
 
     def set_subtitle(self, text: str):
         self._subtitle = text or ""
+        self._apply_header_text()
+
+    def set_status(
+        self,
+        text: str = "",
+        color: str = None,
+        action_label: str = "",
+        action: Callable[[], None] = None,
+    ) -> None:
+        """Show (or clear, with no arguments) the content-status chip beside
+        the Export button, optionally offering an action such as a retry."""
+        if not text:
+            # Cleared, not just hidden: a stale message must not flash back
+            # into view the next time the chip is shown.
+            self.status_label.configure(text="")
+            self.status_label.pack_forget()
+            self.status_action_btn.pack_forget()
+            return
+
+        self.status_label.configure(text=text, text_color=color or theme.TEXT_MUTED)
+
+        if action and action_label:
+            # Width measured from the label rather than fixed: a CTkButton
+            # clips text it can't fit, and the resolved UI font is wider on
+            # macOS than on Linux for the same nominal size.
+            width = max(
+                STATUS_ACTION_MIN_WIDTH,
+                self._subtitle_font.measure(action_label) + STATUS_ACTION_PADDING,
+            )
+            self.status_action_btn.configure(text=action_label, command=action, width=width)
+            self.status_action_btn.pack(side="right", padx=(theme.PADDING_SM, 0))
+        else:
+            self.status_action_btn.pack_forget()
+
+        # Re-packed every time so the label always sits left of the action
+        # button, whichever order the two were last shown in.
+        self.status_label.pack_forget()
+        self.status_label.pack(side="right", padx=(theme.PADDING_SM, 0))
+
+        # The chip just took space from the title, so re-fit it now rather than
+        # waiting for a <Configure> event that a small change may not trigger -
+        # the amount taken depends on the platform's font metrics.
         self._apply_header_text()
 
     def render(self, blocks: List[PreviewBlock]):

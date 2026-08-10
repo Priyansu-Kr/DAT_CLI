@@ -13,9 +13,11 @@ import re
 from dataclasses import dataclass, field
 from typing import List, Tuple
 
-# Roughly 15k tokens of diff. Generous (the models in use have far larger
-# context windows) while still bounding cost and latency.
-DEFAULT_DIFF_CHAR_BUDGET = 60_000
+# Roughly 50k tokens of diff - a small fraction of the model's context window,
+# but enough that a multi-file feature is summarised from most of its code
+# rather than the first hunk of each file. Still bounded, because cost and
+# latency both scale with it, and the answer deadline is finite.
+DEFAULT_DIFF_CHAR_BUDGET = 200_000
 DIFF_CHAR_BUDGET_ENV_VAR = "DAT_AI_DIFF_CHAR_BUDGET"
 
 # Below this, a file's slice is too small to show anything meaningful, so the

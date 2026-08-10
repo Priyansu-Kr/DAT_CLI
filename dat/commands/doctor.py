@@ -58,5 +58,8 @@ class DoctorCommand(BaseCommand):
             print(f"  [6] tkinterdnd2 (drag&drop) : Not installed (GUI falls back to Browse-button only)")
 
         print(f"  [7] Configuration Path      : {self.container.configuration_service.config_file}")
+
+        from dat.commands.config_cmd import describe_content_mode
+        print(f"  [8] Document Content Source : {describe_content_mode(self.container.config)}")
         print("\nDiagnostics complete.\n")
         return ExitCode.SUCCESS

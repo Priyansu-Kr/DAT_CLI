@@ -56,7 +56,12 @@ class GitAdapter:
     def __init__(self, git_path: str = "git"):
         self.git_path = git_path
 
-    def _run(self, args: List[str], cwd: Optional[str] = None) -> Tuple[int, str, str]:
+    def _run(
+        self, args: List[str], cwd: Optional[str] = None, strip: bool = True
+    ) -> Tuple[int, str, str]:
+        """Run a git command. `strip=False` for output whose leading
+        whitespace is data - `status --porcelain` encodes the worktree state
+        in columns 1-2, so stripping would silently shift the first line."""
         cmd = [self.git_path] + args
         try:
             res = subprocess.run(
@@ -67,7 +72,8 @@ class GitAdapter:
                 text=True,
                 check=False
             )
-            return res.returncode, res.stdout.strip(), res.stderr.strip()
+            out = res.stdout.strip() if strip else res.stdout.rstrip("\n")
+            return res.returncode, out, res.stderr.strip()
         except FileNotFoundError:
             return 127, "", "git binary not found"
 
@@ -92,7 +98,7 @@ class GitAdapter:
     def _status_entries(self, cwd: Optional[str] = None) -> List[Tuple[str, str]]:
         """Working-tree status. `-uall` lists untracked *files* rather than
         collapsing them into a directory entry."""
-        code, out, _ = self._run(["status", "--porcelain", "-uall"], cwd=cwd)
+        code, out, _ = self._run(["status", "--porcelain", "-uall"], cwd=cwd, strip=False)
         if code != 0 or not out:
             return []
         entries = []

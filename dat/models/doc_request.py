@@ -3,6 +3,12 @@ from typing import Dict, List, Optional
 from dat.models.git_info import GitInfo
 from dat.models.screenshot_info import ScreenshotInfo
 
+# Where a summary's content came from. The GUI uses this to tell the user
+# whether they are looking at AI-written content or the Git-diff fallback.
+SUMMARY_SOURCE_AI = "ai"
+SUMMARY_SOURCE_GIT_DIFF = "git-diff"
+
+
 @dataclass
 class ChangeSummary:
     overview: str
@@ -10,6 +16,7 @@ class ChangeSummary:
     impact_areas: List[str] = field(default_factory=list)
     test_recommendations: List[str] = field(default_factory=list)
     test_cases: List[str] = field(default_factory=list)
+    source: str = ""
 
 DEFAULT_SECTIONS: Dict[str, bool] = {
     "header": True,

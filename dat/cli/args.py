@@ -42,6 +42,22 @@ def parse_args(args_list: Optional[List[str]] = None) -> argparse.Namespace:
     )
     doc_parser.add_argument("-f", "--format", choices=["docx", "md"], default="docx", help="Output document format")
 
+    # dat save-api-key
+    key_parser = subparsers.add_parser(
+        "save-api-key",
+        help="Save (or clear) your Gemini API key to enable AI-written summaries and test cases",
+    )
+    key_parser.add_argument(
+        "api_key",
+        nargs="?",
+        help="The key itself. Omit it to be prompted (safer - it stays out of your shell history)",
+    )
+    key_parser.add_argument(
+        "--clear",
+        action="store_true",
+        help="Remove the stored key and build documents from the Git diff instead",
+    )
+
     # dat gui
     subparsers.add_parser("gui", help="Launch the DAT Control Center GUI dashboard")
 

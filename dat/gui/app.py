@@ -4,6 +4,7 @@ Built on CustomTkinter (Tk) - CPU/software rasterized, no GPU required, so
 it runs unmodified inside headless VMs and remote desktops.
 """
 import os
+import queue
 import sys
 import threading
 from tkinter import filedialog, messagebox
@@ -28,7 +29,8 @@ from dat.gui.panels.preview_panel import PreviewPanel
 from dat.gui.state import GuiState, build_preview_content, structure_toggle_items
 from dat.gui.widgets.template_content_editor import CHANGE_ACTION, CHANGE_TEXT
 from dat.gui.windows.template_builder import TemplateBuilderWindow
-from dat.models.doc_request import ChangeSummary
+from dat.adapters.ai_adapter import build_git_diff_summary, deadline_for_diff
+from dat.models.doc_request import SUMMARY_SOURCE_AI, ChangeSummary
 from dat.models.git_info import GitInfo
 from dat.models.template_model import DocumentTemplate, TemplateError
 from dat.services.ai_service import default_change_summary
@@ -44,6 +46,19 @@ PREVIEW_DEBOUNCE_MS = 220
 PREVIEW_MAX_WAIT_MS = 900
 AUTOSAVE_DEBOUNCE_MS = 900
 AUTOSAVE_MAX_WAIT_MS = 5000
+
+# AI progress chip: how fast the dots animate, how long a success message
+# lingers, and how much slack the watchdog gives the HTTP layer's own deadline
+# before it declares the wait over on the UI's behalf.
+AI_SPINNER_INTERVAL_MS = 400
+AI_STATUS_CLEAR_MS = 4000
+AI_WATCHDOG_GRACE_SECONDS = 3
+# How often the main thread checks whether the AI worker has finished. Short
+# enough that the content appears immediately once the answer is in.
+AI_POLL_INTERVAL_MS = 120
+# Status-chip states. Only the "applied" message auto-clears; a warning
+# stays until the user acts on it.
+AI_STATUS_APPLIED = "applied"
 
 
 def _patch_scrollable_frame_string_widget_bug() -> None:
@@ -183,6 +198,18 @@ class DATGuiApp(*_DND_MIXIN):
         self._builder_window: Optional[TemplateBuilderWindow] = None
         self._content_dirty = False
         self._closing = False
+        # AI request bookkeeping: an attempt counter so a superseded or
+        # abandoned answer can be recognised and ignored, plus the timer ids
+        # that have to be cancelled when it settles or the window closes.
+        self._ai_attempt = 0
+        self._ai_pending = False
+        self._ai_results: "queue.Queue" = queue.Queue()
+        self._ai_watchdog_id = None
+        self._ai_spinner_id = None
+        self._ai_poll_id = None
+        self._ai_spinner_frame = 0
+        self._ai_status_text = ""
+        self._ai_status_kind = ""
         self._preview_debounce = Debouncer(
             self._refresh_preview,
             delay_ms=PREVIEW_DEBOUNCE_MS,
@@ -227,7 +254,7 @@ class DATGuiApp(*_DND_MIXIN):
             self.state_model.summary_user_edited = True
         else:
             self._refresh_preview()
-            self._load_summary_async()
+            self._load_initial_summary()
 
     # --- Reactive wiring -------------------------------------------------
 
@@ -540,27 +567,172 @@ class DATGuiApp(*_DND_MIXIN):
         """A save in the builder immediately becomes the previewed document."""
         self._activate_template(template)
 
-    def _load_summary_async(self):
+    def _load_initial_summary(self):
+        """Fill the document immediately, then improve it if AI is available.
+
+        The Git diff is local and instant, so the panel opens with real
+        content - changed file names - instead of a blank document that
+        rewrites itself seconds later. When a Gemini key is configured, the
+        AI call runs on top of that with the wait made visible.
+        """
         git_info = self.state_model.git_info
+        self._apply_summary(
+            build_git_diff_summary(
+                getattr(git_info, "inferred_title", "") or self.state_model.title,
+                getattr(git_info, "changed_files", None) or [],
+            )
+        )
+
+        if self.container.config.ai_api_key:
+            self._start_ai_summary()
+
+    def _start_ai_summary(self):
+        """Ask the AI for a better summary, showing progress and a deadline."""
+        git_info = self.state_model.git_info
+        # Each attempt gets a token: a result from a superseded or timed-out
+        # attempt must not land in the panel after we've stopped waiting for it.
+        self._ai_attempt += 1
+        attempt = self._ai_attempt
+        self._ai_pending = True
+
+        self._start_ai_spinner()
+        deadline = deadline_for_diff(getattr(git_info, "raw_diff", "") or "")
+        # Grace period on top of the request's own deadline: this only fires
+        # if the HTTP layer overshoots, so the UI can never wait forever.
+        self._ai_watchdog_id = self.after(
+            int((deadline + AI_WATCHDOG_GRACE_SECONDS) * 1000),
+            lambda: self._on_ai_deadline_passed(attempt),
+        )
 
         def worker():
-            # AIService already guarantees a usable default ChangeSummary
-            # even when the AI provider fails, but guard here too so the
-            # left panel never ends up permanently blank.
+            # AIService already guarantees a usable ChangeSummary even when
+            # the provider fails, but guard here too so a truly unexpected
+            # error can't leave the spinner running forever.
             try:
                 summary = self.container.ai_service.generate_change_summary(git_info)
             except Exception as e:
                 print(f"[Warning] AI summary generation failed, using defaults: {e}")
-                summary = default_change_summary(getattr(git_info, "inferred_title", None))
-            if self._closing:
-                return
-            try:
-                self.after(0, lambda: self._apply_summary(summary))
-            except RuntimeError:
-                # Window closed while the (network-bound) call was in flight.
-                pass
+                summary = default_change_summary(
+                    getattr(git_info, "inferred_title", None),
+                    getattr(git_info, "changed_files", None),
+                )
+            # Hand the result over a queue rather than calling into Tk from
+            # this thread: Tk is not thread-safe, and after() from here raises
+            # outright ("main thread is not in main loop") whenever the main
+            # thread isn't sitting inside mainloop().
+            self._ai_results.put((attempt, summary))
 
         threading.Thread(target=worker, daemon=True).start()
+        self._ai_poll_id = self.after(AI_POLL_INTERVAL_MS, self._poll_ai_result)
+
+    def _poll_ai_result(self):
+        """Main-thread side of the handover: pick up a finished summary."""
+        self._ai_poll_id = None
+        if self._closing:
+            return
+        try:
+            attempt, summary = self._ai_results.get_nowait()
+        except queue.Empty:
+            if self._ai_pending:
+                self._ai_poll_id = self.after(AI_POLL_INTERVAL_MS, self._poll_ai_result)
+            return
+        self._on_ai_summary_ready(attempt, summary)
+
+    def _on_ai_summary_ready(self, attempt: int, summary):
+        if attempt != self._ai_attempt or not self._ai_pending:
+            return  # a late answer we already gave up on
+        self._settle_ai_request()
+
+        if summary.source == SUMMARY_SOURCE_AI:
+            if self.state_model.summary_user_edited:
+                # Their typing wins, but silently dropping a summary they
+                # watched being generated would look like a bug.
+                self._set_ai_status(
+                    "AI summary discarded - your edits kept", theme.TEXT_MUTED,
+                    action_label="Use AI text", action=lambda: self._replace_with_ai(summary),
+                )
+                return
+            self._apply_summary(summary)
+            self._set_ai_status("AI summary applied", theme.TEXT_MUTED,
+                                kind=AI_STATUS_APPLIED)
+            self.after(AI_STATUS_CLEAR_MS, self._clear_ai_status_if_idle)
+            return
+
+        # The adapter fell back, so the request failed or ran out of time -
+        # the Git-diff content already on screen stands.
+        self._show_ai_unavailable("AI unavailable - showing changed files")
+
+    def _on_ai_deadline_passed(self, attempt: int):
+        if attempt != self._ai_attempt or not self._ai_pending:
+            return
+        self._settle_ai_request()
+        self._show_ai_unavailable("AI timed out - showing changed files")
+
+    def _show_ai_unavailable(self, message: str):
+        self._set_ai_status(
+            message, theme.STATUS_WARNING,
+            action_label="Retry AI", action=self._start_ai_summary,
+        )
+
+    def _replace_with_ai(self, summary):
+        """Take the AI text after all, at the user's explicit request."""
+        self.state_model.summary_user_edited = False
+        self._apply_summary(summary)
+        self.state_model.summary_user_edited = True
+        self._set_ai_status()
+
+    def _settle_ai_request(self):
+        self._ai_pending = False
+        self._stop_ai_spinner()
+        if self._ai_watchdog_id is not None:
+            try:
+                self.after_cancel(self._ai_watchdog_id)
+            except Exception:
+                pass
+            self._ai_watchdog_id = None
+
+    # --- AI progress indicator --------------------------------------------
+
+    def _start_ai_spinner(self):
+        self._ai_spinner_frame = 0
+        self._tick_ai_spinner()
+
+    def _tick_ai_spinner(self):
+        if not self._ai_pending or self._closing:
+            return
+        # Trailing dots rather than a glyph spinner: every font ships them,
+        # including the fallback fonts on bare Linux VMs.
+        dots = "." * (1 + self._ai_spinner_frame % 3)
+        self._set_ai_status(f"Writing AI summary{dots}", theme.ACCENT_TECH_BLUE)
+        self._ai_spinner_frame += 1
+        self._ai_spinner_id = self.after(AI_SPINNER_INTERVAL_MS, self._tick_ai_spinner)
+
+    def _stop_ai_spinner(self):
+        if self._ai_spinner_id is not None:
+            try:
+                self.after_cancel(self._ai_spinner_id)
+            except Exception:
+                pass
+            self._ai_spinner_id = None
+
+    def _set_ai_status(self, text: str = "", color: str = None, action_label: str = "",
+                       action=None, kind: str = ""):
+        self._ai_status_text = text
+        # Tracked as state rather than sniffed back out of the label text:
+        # the wording (and any icon in it) is presentation, and matching on it
+        # would break the moment either changed.
+        self._ai_status_kind = kind
+        try:
+            self.preview_panel.set_status(text, color, action_label, action)
+        except Exception:
+            # A status chip is never worth taking the window down for.
+            pass
+
+    def _clear_ai_status_if_idle(self):
+        # Only clear the message this timer was started for; a retry or a new
+        # state may have replaced it in the meantime.
+        if not self._ai_pending and self._ai_status_kind == AI_STATUS_APPLIED:
+            self._set_ai_status()
 
     def _apply_summary(self, summary):
         # The user may have already started editing the summary by hand
@@ -653,6 +825,18 @@ class DATGuiApp(*_DND_MIXIN):
         ):
             if debouncer is not None:
                 debouncer.cancel()
+
+        # The AI spinner and its watchdog are plain after() timers, and would
+        # fire into a destroyed window just as noisily.
+        self._ai_pending = False
+        for timer_attr in ("_ai_spinner_id", "_ai_watchdog_id", "_ai_poll_id"):
+            timer_id = getattr(self, timer_attr, None)
+            if timer_id is not None:
+                try:
+                    self.after_cancel(timer_id)
+                except Exception:
+                    pass
+                setattr(self, timer_attr, None)
 
     def destroy(self):
         # A debounced callback that fires after the interpreter is gone raises

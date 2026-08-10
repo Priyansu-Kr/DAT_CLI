@@ -46,18 +46,32 @@ This toolkit includes a universal setup script that works on **Linux (Ubuntu/Deb
 
 ---
 
-## 🔑 AI Configuration (Optional but Recommended)
+## 🔑 AI Configuration (Optional)
 
-To enable the professional AI-powered summaries, get a free API key from [Google AI Studio](https://aistudio.google.com/app/apikey) and add it to your system:
+A Gemini API key is **not required**. DAT can write a document's content three ways:
+
+| Content source | When it's used | "Changes Done" | Test cases |
+| --- | --- | --- | --- |
+| **Gemini AI** | A key is saved (or `$DAT_AI_KEY` is set) | Precise summary written from the branch diff | Written for you |
+| **An LLM / AI agent** | Your agent drives DAT through its [MCP server](./MCP%20Integration.md) | Authored by the agent | Authored by the agent |
+| **Git diff** | No key — the fallback | The file names your work touched | Left empty for you to fill in |
+
+The first time you run `dat generate-doc`, DAT asks once whether you have a key —
+answer **`n`** and it never asks again, generating documents from your Git diff.
+Answer **`y`** and it takes the key, checks its format and saves it.
+
+To add (or remove) a key at any time:
 
 ```bash
-# For Linux
-echo 'export DAT_AI_KEY="YOUR_KEY_HERE"' >> ~/.bashrc && source ~/.bashrc
-
-# For macOS
-echo 'export DAT_AI_KEY="YOUR_KEY_HERE"' >> ~/.zshrc && source ~/.zshrc
+dat save-api-key            # prompts for the key, then saves it
+dat save-api-key --clear    # forget the key and go back to Git-diff content
 ```
-*Note: If you don't set this, the tool will prompt you for it on the first run.*
+
+Get a free key from [Google AI Studio](https://aistudio.google.com/app/apikey).
+`$DAT_AI_KEY` also works if you prefer to keep the key in your shell config —
+DAT uses it but never copies it into `~/.dat/config.yaml`.
+
+Run `dat config` to see which source your documents currently use.
 
 ---
 
@@ -88,8 +102,11 @@ points at that flag rather than quietly writing a file.
 # Check if your environment is set up correctly
 dat doctor
 
-# View current configuration
+# View current configuration (including which content source is active)
 dat config
+
+# Save a Gemini API key to enable AI-written summaries (or --clear to remove it)
+dat save-api-key
 
 # Start the MCP server (for AI client/IDE integration - see MCP Integration.md)
 dat mcp
@@ -196,11 +213,27 @@ The diff is packed to a character budget that is **shared across files**, so a
 git printed first. Whatever doesn't fit is named in the prompt, so the model
 can reference an omitted file without inventing its contents.
 
-Raise or lower the budget with an environment variable (default 60,000
-characters, roughly 15k tokens):
+Raise or lower the budget with an environment variable (default 200,000
+characters, roughly 50k tokens; ~150 files can each get a usable share):
 
 ```bash
-export DAT_AI_DIFF_CHAR_BUDGET=120000
+export DAT_AI_DIFF_CHAR_BUDGET=400000
+```
+
+### Waiting, and what happens when it takes too long
+
+The Preview Panel opens with the Git-diff content already in it — the changed
+file names — and shows a *"Writing AI summary…"* chip while the model works.
+When the answer arrives the content is replaced; anything you typed in the
+meantime wins, and the AI text stays one click away.
+
+The answer deadline is **15 seconds**, growing by 5s per extra 100k characters
+of prompt, capped at 45s. Miss it and the document keeps the Git-diff content
+with a *"Retry AI"* action — nothing is left half-written. Pin the deadline if
+you'd rather wait (or fail faster):
+
+```bash
+export DAT_AI_TIMEOUT_SECONDS=60
 ```
 
 New files matter here: `git diff` never shows untracked content, so without

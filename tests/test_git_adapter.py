@@ -20,7 +20,9 @@ class FakeGit(GitAdapter):
         self.responses = responses
         self.calls: List[List[str]] = []
 
-    def _run(self, args: List[str], cwd: Optional[str] = None) -> Tuple[int, str, str]:
+    def _run(
+        self, args: List[str], cwd: Optional[str] = None, strip: bool = True
+    ) -> Tuple[int, str, str]:
         self.calls.append(list(args))
         key = " ".join(args)
         if key in self.responses:
@@ -83,6 +85,19 @@ class TestChangedFiles(unittest.TestCase):
     def test_renamed_file_is_listed_once_by_destination(self):
         git = FakeGit({"status --porcelain -uall": (0, "R  old.py -> new.py")})
         self.assertEqual(git.get_changed_files(), ["new.py"])
+
+    def test_status_output_is_not_stripped(self):
+        """Columns 1-2 of a porcelain line are the worktree state, so leading
+        whitespace is data. Stripping the output shifted the *first* line by a
+        character: ' M "My File.md"' came back as 'My File.md"' - a mangled
+        name in the document, and a misread status."""
+        git = FakeGit({"status --porcelain -uall": (0, ' M "My File.md"\n M second.py\n')})
+
+        self.assertEqual(git.get_changed_files(), ["My File.md", "second.py"])
+
+    def test_first_line_untracked_state_survives(self):
+        git = FakeGit({"status --porcelain -uall": (0, " D gone.py\n?? fresh.py")})
+        self.assertEqual(git.get_untracked_files(), ["fresh.py"])
 
     def test_clean_tree_falls_back_to_the_branch_range(self):
         git = FakeGit({

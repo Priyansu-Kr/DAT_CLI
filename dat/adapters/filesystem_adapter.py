@@ -16,12 +16,20 @@ class FilesystemAdapter:
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
             return f.read()
 
-    def write_text(self, path: str, content: str) -> None:
+    def write_text(self, path: str, content: str, mode: Optional[int] = None) -> None:
         dst_dir = os.path.dirname(path)
         if dst_dir:
             self.ensure_dir(dst_dir)
         with open(path, "w", encoding="utf-8") as f:
             f.write(content)
+        if mode is not None:
+            try:
+                os.chmod(path, mode)
+            except OSError:
+                # POSIX permissions don't apply everywhere (Windows, some
+                # network/FAT mounts). The file is written either way; the
+                # tighter mode is a hardening step, not a requirement.
+                pass
 
     def write_text_atomic(self, path: str, content: str) -> None:
         """Write via a temp file + rename so a crash/full disk mid-write can

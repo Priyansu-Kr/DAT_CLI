@@ -13,9 +13,65 @@ or *"check if my environment has everything DAT needs"*, and it will call the ri
 
 ## 1. Prerequisites
 
-- DAT is installed and the `dat` command is on your `PATH` (run `./setup.sh` from the project root, or
-  `pip install -e .` inside your virtualenv — see the main [README](README.md)).
+- DAT is installed — either install path from the main [README](README.md) works.
 - Verify it works: `dat doctor` should run without a "command not found" error.
+
+### Find your `dat` launcher path
+
+Every client config in §3 needs the **absolute path** to the `dat` launcher, never the bare word `dat`
+(§3 explains why). Which path depends on how you installed DAT — find your case below.
+
+#### Case A — you installed with pip
+
+```bash
+pip install --user developer-automation-toolkit
+```
+
+**Your launcher is `~/.local/bin/dat`** — written by pip, a real executable. Get the exact path to paste:
+
+```bash
+command -v dat
+# /home/you/.local/bin/dat        ← use this, expanded, in the JSON
+```
+
+Client configs must use the **expanded** path (`/home/you/.local/bin/dat`), because `~` is a shell feature and
+no MCP client expands it inside JSON. Other pip variants:
+
+| How you installed | Launcher path |
+| --- | --- |
+| `pip install --user` (Linux) | `/home/<you>/.local/bin/dat` |
+| `pip install --user` (macOS) | `/Users/<you>/Library/Python/3.x/bin/dat` |
+| `pipx install` | `/home/<you>/.local/bin/dat` |
+| Windows (`pip install --user`) | `C:\Users\<you>\AppData\Roaming\Python\Python3xx\Scripts\dat.exe` |
+
+#### Case B — you cloned the repo and ran `setup.sh`
+
+```bash
+git clone https://github.com/Priyansu-Kr/DAT_CLI.git && cd DAT_CLI && ./setup.sh
+```
+
+`setup.sh` creates a virtualenv named `venv` in the repo root and installs DAT into it, so
+**your launcher is `<repo>/venv/bin/dat`** — for a clone at `/home/you/DAT_CLI`, that is:
+
+```
+/home/you/DAT_CLI/venv/bin/dat
+```
+
+Print it exactly, from the repo root (`venv\Scripts\dat.exe` on Windows):
+
+```bash
+echo "$(pwd)/venv/bin/dat"
+```
+
+**`command -v dat` is not usable in this case.** `setup.sh` makes `dat` a shell **alias** in your `~/.bashrc`
+(`~/.zshrc` on macOS), so `command -v dat` prints `alias dat='...'` rather than a path — and an alias exists
+only inside your interactive shell, so **no MCP client can ever use it**. Take the path out of the alias, or
+use the `echo` command above. If you made the venv yourself instead of running `setup.sh`, substitute its
+name (e.g. `<repo>/.venv/bin/dat`).
+
+> **Both cases, one rule:** whatever your case, the value you put in `"command"` is an absolute path ending in
+> `/dat` that you can run directly in a terminal and get the server's silent stdio wait. Test it before
+> editing any client config — `/full/path/to/dat doctor` should print the environment report.
 
 No extra dependencies are required for the MCP server itself — it's part of the core `dat` package and talks
 raw JSON-RPC 2.0 over stdio, so nothing beyond the base install is needed. `python-docx`/`customtkinter` are
@@ -50,25 +106,65 @@ DAT_MCP_LOG_LEVEL=DEBUG dat mcp
 ## 3. Connecting an MCP client
 
 All MCP clients boil down to the same thing: a command to launch the server, plus (optionally) the working
-directory it should start in. Point `command` at `dat`, `args` at `["mcp"]`, and set `cwd` to the project you
-want it to operate on by default — you can always override the target repo per-call with the `repo_path`
-argument (see §5), which is the recommended approach if you work across multiple projects with one client.
+directory it should start in. Point `command` at your `dat` launcher, `args` at `["mcp"]`, and set `cwd` to the
+project you want it to operate on by default — you can always override the target repo per-call with the
+`repo_path` argument (see §5), which is the recommended approach if you work across multiple projects with one
+client.
+
+**What to put in `"command"`, by install method** — the two values from §1, side by side:
+
+| You installed with | `"command"` value |
+| --- | --- |
+| **pip** (`pip install --user developer-automation-toolkit`) | `"/home/you/.local/bin/dat"` |
+| **clone + `setup.sh`** | `"/home/you/DAT_CLI/venv/bin/dat"` |
+
+`"args"` is `["mcp"]` in both cases. Replace `you` with your username, and `/home/you/DAT_CLI` with wherever
+you cloned the repo.
+
+> **Never use the bare string `dat`.** A client spawns the server directly rather than through your interactive
+> shell, so it never sources `~/.bashrc` / `~/.zshrc`. That breaks the bare form in two different ways: after a
+> **pip** install, desktop apps started from a dock, Finder, or a launcher inherit only the session's base
+> `PATH`, which on most distros excludes `~/.local/bin` where the launcher lives; after **`setup.sh`**, `dat`
+> is only a shell alias, which no subprocess ever inherits. Either way you get `spawn dat ENOENT` /
+> "command not found" in the client's logs even though `dat mcp` works perfectly in your terminal. An absolute
+> path removes `PATH` from the equation and is correct for every client, so there is no reason to risk the
+> bare form. The one place it is genuinely safe is `claude mcp add` run from your own terminal.
 
 ### Claude Desktop
 
-Edit your `claude_desktop_config.json` (Claude → Settings → Developer → Edit Config):
+Edit your `claude_desktop_config.json` (Claude → Settings → Developer → Edit Config). Claude Desktop is
+GUI-launched, so the absolute path matters most here.
+
+Installed with **pip**:
 
 ```json
 {
   "mcpServers": {
     "dat": {
-      "command": "dat",
+      "command": "/home/you/.local/bin/dat",
       "args": ["mcp"],
       "cwd": "/absolute/path/to/your/project"
     }
   }
 }
 ```
+
+Installed by **cloning the repo + `setup.sh`** — only the `command` line differs:
+
+```json
+{
+  "mcpServers": {
+    "dat": {
+      "command": "/home/you/DAT_CLI/venv/bin/dat",
+      "args": ["mcp"],
+      "cwd": "/absolute/path/to/your/project"
+    }
+  }
+}
+```
+
+On Windows, escape the backslashes: `"command": "C:\\Users\\you\\AppData\\Roaming\\Python\\Python311\\Scripts\\dat.exe"`
+(pip) or `"command": "C:\\Users\\you\\DAT_CLI\\venv\\Scripts\\dat.exe"` (from source).
 
 Restart Claude Desktop after saving. DAT's tools will appear under the 🔨 tool icon in the chat composer.
 
@@ -80,13 +176,21 @@ From inside the target project directory:
 claude mcp add dat -- dat mcp
 ```
 
-Or add it directly to your project's `.mcp.json`:
+That bare `dat` is the one safe use of it — `claude` runs in the terminal whose `PATH` you set up. It still
+fails after `setup.sh`, whose `dat` is an alias, so pass the venv path explicitly:
+
+```bash
+claude mcp add dat -- /home/you/DAT_CLI/venv/bin/dat mcp     # clone + setup.sh
+claude mcp add dat -- /home/you/.local/bin/dat mcp           # pip, also fine
+```
+
+Or add it directly to your project's `.mcp.json`, using your path from the table above:
 
 ```json
 {
   "mcpServers": {
     "dat": {
-      "command": "dat",
+      "command": "/home/you/.local/bin/dat",
       "args": ["mcp"]
     }
   }
@@ -101,7 +205,7 @@ Add to `.cursor/mcp.json` (project-level) or your global Cursor MCP settings:
 {
   "mcpServers": {
     "dat": {
-      "command": "dat",
+      "command": "/home/you/.local/bin/dat",
       "args": ["mcp"]
     }
   }
@@ -117,18 +221,22 @@ Add to `.vscode/mcp.json`:
   "servers": {
     "dat": {
       "type": "stdio",
-      "command": "dat",
+      "command": "/home/you/.local/bin/dat",
       "args": ["mcp"]
     }
   }
 }
 ```
 
+Both examples show the **pip** path; installed from source, swap in `/home/you/DAT_CLI/venv/bin/dat`. Cursor and
+VS Code are usually started from a dock or launcher, which is exactly the case where a bare `dat` fails.
+
 ### Any other MCP client
 
 If your client isn't listed above, it almost certainly supports the same shape: a stdio-launched command with
-arguments. Use `command: "dat"`, `args: ["mcp"]`. If your client can't set a per-server `cwd`, always pass
-`repo_path` explicitly in tool calls instead (see below).
+arguments. Use `args: ["mcp"]` and, as `command`, your absolute launcher path from §1 —
+`/home/you/.local/bin/dat` for pip, `/home/you/DAT_CLI/venv/bin/dat` for a clone + `setup.sh`. If your client
+can't set a per-server `cwd`, always pass `repo_path` explicitly in tool calls instead (see below).
 
 ---
 
@@ -254,6 +362,12 @@ you have two options:
 
 ## 7. Troubleshooting
 
+- **The server never starts / `spawn dat ENOENT` / "command not found" in the client's logs** — the client
+  can't resolve `dat`, even though your terminal can. This is the most common setup failure, and the fix is
+  always to replace `"command": "dat"` with your absolute launcher path, then restart the client:
+  `/home/you/.local/bin/dat` if you installed with **pip**, `/home/you/DAT_CLI/venv/bin/dat` if you **cloned
+  the repo and ran `setup.sh`** (see §1). Confirm the path is right by running `<that path> doctor` in a
+  terminal first — if that prints the environment report, the client will be able to launch it too.
 - **"Server not initialized" error** — the client didn't send the MCP `initialize` handshake first. This
   indicates a client bug, not a DAT issue; the server rejects `tools/list`/`tools/call` before `initialize`
   by design (per the MCP spec).
@@ -300,9 +414,11 @@ you have two options:
   process — `start_new_session=True` on macOS/Linux, `CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS` on Windows
   — that outlives the tool call, and returns immediately once a short (~1.5s) crash-detection window has
   passed. The child is launched via `sys.executable` (the same interpreter already running the MCP server),
-  not by resolving `dat` on `PATH` — `setup.sh` wires `dat` up as a shell **alias**, which a non-interactive
-  subprocess never inherits, so re-using the current interpreter is what makes this reliable across macOS,
-  Linux, and a VM alike.
+  not by resolving `dat` on `PATH`. That holds for either install shape: from source, `setup.sh` wires `dat` up
+  as a shell **alias** that a non-interactive subprocess never inherits; from pip, the launcher is a real
+  executable but may sit in a `~/.local/bin` that the client's `PATH` omits. Re-using the current interpreter
+  sidesteps both — whichever Python is running the server already has the `dat` package importable — which is
+  what makes this reliable across macOS, Linux, and a VM alike.
 - **Seed file handoff**: the `title`/`ticket`/`author`/`summary`/`images` you pass to `open_preview` are
   written to a one-shot JSON file in the OS temp directory and handed to the `generate-doc` subprocess via
   `--seed-file`; that process deletes the file as soon as it's read (or immediately if it's malformed —

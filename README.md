@@ -33,8 +33,41 @@ DAT; install from source if you intend to change its code.
 DAT is published on PyPI as
 [`developer-automation-toolkit`](https://pypi.org/project/developer-automation-toolkit/).
 
-**One-line setup.** This script installs the package, adds the system Tk
-libraries pip cannot provide, puts `dat` on your PATH and runs a health check:
+Three steps, no clone required:
+
+1.  **Install DAT:**
+    ```bash
+    pip install --user --upgrade developer-automation-toolkit
+    ```
+    If pip refuses with an *externally-managed-environment* error, your Python
+    follows PEP 668; use `pipx install developer-automation-toolkit` instead.
+
+2.  **Put `dat` on your PATH.** `pip install --user` writes the launcher to
+    `~/.local/bin`, which many distros leave off PATH:
+    ```bash
+    which dat || {
+        echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc   # macOS: ~/.zshrc
+        source ~/.bashrc
+    }
+    ```
+
+3.  **Check your environment:**
+    ```bash
+    dat doctor
+    ```
+    If it reports `Tkinter (GUI) : MISSING`, it prints the exact install command
+    for your OS — run that and you're done. Tk is the one dependency that has to
+    come from your OS packages rather than PyPI, which is why pip can't supply it.
+
+You do **not** need to clone the repository or run `setup.sh` for this path —
+pip generates a real `dat` executable, so there is no alias to configure.
+
+<details>
+<summary><b>Optional: do all three with one script</b></summary>
+
+If you would rather not run the steps by hand, `install.sh` does all of them —
+including installing Tk for you via apt/dnf/pacman/Homebrew — and is safe to
+re-run:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Priyansu-Kr/DAT_CLI/main/install.sh -o install.sh
@@ -42,40 +75,9 @@ bash install.sh
 source ~/.bashrc     # macOS: source ~/.zshrc
 ```
 
-<details>
-<summary><b>Or do the same four steps by hand</b></summary>
-
-1.  **Install the Tk system libraries.** The Preview Panel is a Tk GUI, and
-    `tkinter` only ever comes from your OS packages — never from PyPI:
-    ```bash
-    sudo apt install -y python3-tk     # Debian/Ubuntu
-    brew install python-tk             # macOS (Homebrew)
-    ```
-    Confirm with `python3 -c "import tkinter"` — silence means success.
-
-2.  **Install DAT:**
-    ```bash
-    pip install --user --upgrade developer-automation-toolkit
-    ```
-    If pip refuses with an *externally-managed-environment* error, your Python
-    follows PEP 668; use `pipx install developer-automation-toolkit` instead.
-
-3.  **Put `dat` on your PATH.** `pip install --user` writes the launcher to
-    `~/.local/bin`, which many distros leave off PATH. If `which dat` prints
-    nothing:
-    ```bash
-    echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
-    source ~/.bashrc
-    ```
-
-4.  **Verify:**
-    ```bash
-    dat doctor
-    ```
+`curl` fetches that single file from this repository; you still don't need a
+clone. Read it before running it, as with any script from the internet.
 </details>
-
-You do **not** need to clone the repository or run `setup.sh` for this path —
-pip generates a real `dat` executable, so there is no alias to configure.
 
 **Upgrading later:**
 ```bash

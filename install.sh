@@ -29,6 +29,9 @@ echo "🐍 Using $(python3 -V)"
 # ------------------------------------------------------- 2. Tk system libs
 # The Preview Panel is a Tk GUI. tkinter ships with the OS Python packaging,
 # never from PyPI, so pip alone leaves you with an import error at runtime.
+# PIL.ImageTk is the second half of the same story: distros split Pillow's Tk
+# bridge into its own package, and without it the preview renders every
+# screenshot as "[image unavailable]" while the exported .docx looks fine.
 install_tk() {
     case "$(uname)" in
         Darwin)
@@ -40,13 +43,13 @@ install_tk() {
             ;;
         Linux)
             if command -v apt-get >/dev/null 2>&1; then
-                sudo apt-get update && sudo apt-get install -y python3-tk
+                sudo apt-get update && sudo apt-get install -y python3-tk python3-pil.imagetk
             elif command -v dnf >/dev/null 2>&1; then
-                sudo dnf install -y python3-tkinter
+                sudo dnf install -y python3-tkinter python3-pillow-tk
             elif command -v pacman >/dev/null 2>&1; then
-                sudo pacman -S --noconfirm tk
+                sudo pacman -S --noconfirm tk python-pillow
             else
-                echo "⚠️  Unknown package manager — install the python3-tk package manually."
+                echo "⚠️  Unknown package manager — install the python3-tk and python3-pil.imagetk packages manually."
             fi
             ;;
         *)
@@ -55,8 +58,8 @@ install_tk() {
     esac
 }
 
-if python3 -c "import tkinter" >/dev/null 2>&1; then
-    echo "🖼  Tkinter already present."
+if python3 -c "import tkinter; from PIL import ImageTk" >/dev/null 2>&1; then
+    echo "🖼  Tkinter and Pillow's ImageTk already present."
 else
     echo "🖼  Installing Tk system libraries..."
     install_tk

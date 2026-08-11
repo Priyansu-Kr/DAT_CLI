@@ -12,7 +12,7 @@ if [ "$OS" == "Darwin" ]; then
 elif [ "$OS" == "Linux" ]; then
     echo "🐧 Linux detected..."
     # Install dependencies for Linux
-    sudo apt update && sudo apt install -y python3-venv python3-tk
+    sudo apt update && sudo apt install -y python3-venv python3-tk python3-pil.imagetk
 else
     echo "⚠️ Unknown OS. Attempting standard setup..."
 fi

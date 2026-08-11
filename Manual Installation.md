@@ -10,7 +10,7 @@ If the automated `./setup.sh` script fails or you prefer a custom setup, follow 
 Install Python, virtual environment support, and the UI library (Tkinter) needed for the file picker:
 ```bash
 sudo apt update
-sudo apt install python3 python3-venv python3-tk git -y
+sudo apt install python3 python3-venv python3-tk python3-pil.imagetk git -y
 ```
 
 ### For macOS
@@ -104,6 +104,15 @@ If you see "ADB Available: OK" and "python-docx: OK", you are ready!
 ### "ModuleNotFoundError: No module named '_tkinter'"
 - **macOS:** Reinstall python with tk support: `brew uninstall python && brew install python && brew install tcl-tk`.
 - **Linux:** Ensure you ran `sudo apt install python3-tk`.
+
+### Preview shows "[image unavailable]" instead of screenshots
+The exported `.docx` has the images but the on-screen preview does not. The
+preview draws thumbnails through `PIL.ImageTk`, which Linux distros package
+separately from Pillow; the DOCX writer never touches Tk, hence the split.
+- **Linux:** `sudo apt install python3-pil.imagetk` (Fedora: `python3-pillow-tk`, Arch: `python-pillow`), then restart `dat`.
+- **macOS / Windows:** `pip install --force-reinstall Pillow` — those wheels bundle ImageTk.
+
+Confirm the fix with `python3 -c "from PIL import ImageTk"`; it should print nothing.
 
 ### "dat: command not found"
 Ensure you ran the `source` command on your config file after adding the alias, or simply restart your terminal window.

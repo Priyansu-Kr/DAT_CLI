@@ -103,6 +103,16 @@ Three steps, no clone required:
     for your OS — run that and you're done. Tk is the one dependency that has to
     come from your OS packages rather than PyPI, which is why pip can't supply it.
 
+    On Debian/Ubuntu the interactive preview needs one more OS package for the
+    same reason — Pillow's Tk bridge, which the distro ships separately:
+    ```bash
+    sudo apt install python3-tk python3-pil.imagetk
+    ```
+    Without it the preview shows `[image unavailable]` in place of every
+    screenshot, even though the exported `.docx` embeds them correctly.
+    (Fedora: `python3-tkinter python3-pillow-tk`; Arch: `tk python-pillow`.
+    macOS and Windows need nothing extra — those Pillow wheels bundle it.)
+
 You do **not** need to clone the repository or run `setup.sh` for this path —
 pip generates a real `dat` executable, so there is no alias to configure.
 

@@ -23,7 +23,51 @@
 
 ### Prerequisites
 *   **Python 3.9+**
+*   **pip** — Python's package installer, used by both install paths below
 *   **Git**
+
+Verify all three before you start:
+
+```bash
+python3 --version           # 3.9 or newer
+python3 -m pip --version    # pip, belonging to that same Python
+git --version
+```
+
+Use `python3 -m pip`, not a bare `pip`: on many systems only `pip3` exists, and
+where both exist `pip` can belong to a different Python than the one that will
+run DAT. If all three commands print a version, skip ahead to the install paths.
+
+<details>
+<summary><b>If Python or pip is missing</b></summary>
+
+**Install both from your OS package manager** (the shortest route, needs root):
+
+| System | Command |
+| --- | --- |
+| Debian / Ubuntu | `sudo apt update && sudo apt install python3 python3-pip python3-venv` |
+| Fedora / RHEL | `sudo dnf install python3 python3-pip` |
+| Arch | `sudo pacman -S python python-pip` |
+| Alpine | `sudo apk add python3 py3-pip` |
+| macOS | `brew install python` — bundles pip |
+| Windows | The [python.org installer](https://www.python.org/downloads/), with **Add python.exe to PATH** checked; verify with `py -m pip --version` |
+
+**If Python is installed but pip isn't,** bootstrap it from Python's own
+standard library — no root and no download required:
+
+```bash
+python3 -m ensurepip --upgrade
+```
+
+Debian and Ubuntu strip `ensurepip` out of the base `python3` package, so there
+it fails with `No module named ensurepip`; use the apt command above instead.
+As a last resort on any system:
+
+```bash
+curl -fsSL https://bootstrap.pypa.io/get-pip.py -o get-pip.py
+python3 get-pip.py --user
+```
+</details>
 
 Pick **one** of the two paths below. Install from PyPI if you just want to *use*
 DAT; install from source if you intend to change its code.

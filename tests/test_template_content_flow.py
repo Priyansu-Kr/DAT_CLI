@@ -353,5 +353,77 @@ class TestEditingListTokenContent(unittest.TestCase):
         self.assertFalse(state.summary_user_edited)
 
 
+class TestRowsDefinedWhileBuilding(unittest.TestCase):
+    """Rows are optional structure: a table that is the same in every
+    document (metadata, say) can carry its rows from the builder, and they
+    stay editable and extendable while filling a document in."""
+
+    def _metadata_table(self) -> TemplateBlock:
+        table = TemplateBlock.create(BLOCK_TABLE)
+        table.set_table_size(2, 2)
+        table.set_cell(0, 0, "Ticket No.")
+        table.set_cell(0, 1, "{{ticket_id}}")
+        table.set_cell(1, 0, "Created By")
+        table.set_cell(1, 1, "{{author}}")
+        return table
+
+    def _state(self, table: TemplateBlock) -> GuiState:
+        state = GuiState(ticket_id="NTRAK-41722", author="Priyansu")
+        state.set_active_template(DocumentTemplate(name="T", sections=[
+            TemplateSection(title="Task Detail", blocks=[table])
+        ]))
+        return state
+
+    def test_rows_written_in_the_builder_resolve_per_document(self):
+        table = self._metadata_table()
+        rendered = _rendered(self._state(table))
+        self.assertIn("Ticket No.", rendered)
+        self.assertIn("NTRAK-41722", rendered)
+        self.assertIn("Priyansu", rendered)
+        self.assertNotIn("{{ticket_id}}", rendered)
+
+    def test_builder_rows_survive_saving_and_reloading_the_template(self):
+        template = DocumentTemplate(name="T", sections=[
+            TemplateSection(title="Task Detail", blocks=[self._metadata_table()])
+        ])
+        reloaded = DocumentTemplate.from_dict(template.to_dict())
+        self.assertEqual(
+            reloaded.sections[0].blocks[0].table_rows,
+            [["Ticket No.", "{{ticket_id}}"], ["Created By", "{{author}}"]],
+        )
+
+    def test_builder_rows_are_editable_while_filling_the_document_in(self):
+        table = self._metadata_table()
+        state = self._state(table)
+        table.set_cell(0, 0, "Ticket")  # what the Control Center's cell entry does
+        rendered = _rendered(state)
+        self.assertIn("Ticket", rendered)
+        self.assertNotIn("Ticket No.", rendered)
+
+    def test_more_rows_can_still_be_added_per_document(self):
+        table = self._metadata_table()
+        state = self._state(table)
+        table.add_row()
+        table.set_cell(2, 0, "Approved By")
+        table.set_cell(2, 1, "{{approved_by}}")
+        state.approved_by = "Reviewer"
+
+        preview = next(b for b in build_preview_content(state) if b.kind == "table")
+        self.assertEqual(preview.table_rows[2], ["Approved By", "Reviewer"])
+
+    def test_a_table_can_still_be_left_without_rows(self):
+        """The other half of optional: no rows here, all of them per document."""
+        table = TemplateBlock.create(BLOCK_TABLE)
+        table.set_table_size(0, 2)
+        self.assertEqual(table.row_count, 0)
+        self.assertTrue(table.add_row())
+        self.assertEqual(table.row_count, 1)
+
+    def test_resizing_preserves_rows_that_still_fit(self):
+        table = self._metadata_table()
+        table.set_table_size(1, 2)
+        self.assertEqual(table.table_rows, [["Ticket No.", "{{ticket_id}}"]])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -15,6 +15,7 @@ saving can never mutate what the main window is currently rendering.
 """
 import os
 import platform
+import tkinter as tk
 from datetime import datetime
 from tkinter import filedialog, messagebox
 from typing import Callable, List, Optional
@@ -41,8 +42,10 @@ from dat.models.template_model import (
     BLOCK_SPEC_BY_KIND,
     MAX_COL_WEIGHT,
     MAX_TABLE_COLS,
+    MAX_TABLE_ROWS,
     MIN_COL_WEIGHT,
     MIN_TABLE_COLS,
+    MIN_TABLE_ROWS,
     PALETTE_GROUPS,
     CODE_TOKENS,
     LIST_TOKENS,
@@ -69,6 +72,13 @@ CLOSE_SEQUENCES = ["<Command-w>"] if _IS_MACOS else []
 # Sidebar text budget: the scrollable frame is narrower than the sidebar
 # itself (padding + scrollbar), so labels wrap/truncate against this.
 SIDEBAR_TEXT_WRAP = 132
+
+# How many rows of a table can be written here, well below the model's cap.
+# Rows defined in the structure are the fixed ones - a metadata block, a
+# fixed checklist - and a grid that long already dominates the editor page.
+# A document needing more adds them while being filled in, where each row is
+# its own card and the count runs to MAX_TABLE_ROWS.
+BUILDER_MAX_TABLE_ROWS = min(50, MAX_TABLE_ROWS)
 
 
 def _token_help():
@@ -818,12 +828,15 @@ class TemplateBuilderWindow(ctk.CTkToplevel):
             ctk.CTkFrame(parent, fg_color=theme.BORDER_MUTED, height=2).pack(fill="x", pady=8)
 
     def _build_table_fields(self, parent, block: TemplateBlock) -> None:
-        """Columns only.
+        """Columns, and optionally the rows themselves.
 
-        A table's column count is part of the document's structure and is
-        fixed here; rows are content, so they are added while filling the
-        document in (Control Center → Document Content), however many the
-        reader needs.
+        A table's column count is part of the document's structure. Rows are
+        content, so a table can be left with none and filled in per document
+        (Control Center → Document Content). But a table that is the *same*
+        every time - a metadata block of `Ticket No. | {{ticket_id}}` rows,
+        say - is worth writing once here, so rows can be added and filled at
+        this end too. Either way the reader can still edit those cells and
+        add more rows while filling the document in.
         """
         weights = block.normalized_col_weights()
 
@@ -833,6 +846,11 @@ class TemplateBuilderWindow(ctk.CTkToplevel):
         self._stepper(
             controls, "Columns", block.col_count, MIN_TABLE_COLS, MAX_TABLE_COLS,
             lambda value, b=block: self._resize_table(b, b.row_count, value),
+        )
+
+        self._stepper(
+            controls, "Rows", block.row_count, MIN_TABLE_ROWS, BUILDER_MAX_TABLE_ROWS,
+            lambda value, b=block: self._resize_table(b, value, b.col_count),
         )
 
         header_var = ctk.BooleanVar(value=block.include_headers)
@@ -869,12 +887,42 @@ class TemplateBuilderWindow(ctk.CTkToplevel):
                 row=1, column=col, sticky="ew", padx=2, pady=(2, 0)
             )
 
+        # Cells for the rows defined here. Left empty they are simply blank
+        # rows the reader fills in; a token typed into one resolves per
+        # document, which is what makes a fixed metadata table worth keeping
+        # in the structure.
+        editable_rows = min(block.row_count, BUILDER_MAX_TABLE_ROWS)
+        for row in range(editable_rows):
+            for col in range(block.col_count):
+                entry = self._cell_entry(
+                    grid,
+                    block.table_rows[row][col] if col < len(block.table_rows[row]) else "",
+                )
+                entry.grid(row=2 + row, column=col, sticky="ew", padx=2, pady=2)
+                entry.bind(
+                    "<KeyRelease>",
+                    lambda _e=None, b=block, r=row, c=col, w=entry: self._set_table_cell(b, r, c, w.get()),
+                )
+
         row_word = "row" if block.row_count == 1 else "rows"
         split = " · ".join(f"{p}%" for p in percentages)
+        filled = (
+            f"{block.row_count} {row_word} defined here"
+            if block.row_count
+            else "no rows yet"
+        )
+        note = (
+            f"{block.col_count} columns ({split}) · {filled} — rows are optional: "
+            f"add them here for content that never changes, or leave the table "
+            f"empty and add rows while filling the document in."
+        )
+        if block.row_count > editable_rows:
+            note += (
+                f" Only the first {editable_rows} are editable here; the rest are "
+                f"filled in per document."
+            )
         ctk.CTkLabel(
-            parent,
-            text=f"{block.col_count} columns ({split}) · {block.row_count} {row_word} of content — "
-                 f"add or remove rows while filling the document in.",
+            parent, text=note,
             anchor="w", justify="left", wraplength=600, text_color=theme.TEXT_MUTED,
             font=(theme.FONT_INTERFACE_FAMILY, theme.FONT_SIZE_LABEL - 3),
         ).pack(fill="x", pady=(6, 0))
@@ -917,6 +965,29 @@ class TemplateBuilderWindow(ctk.CTkToplevel):
             parent, height=28, fg_color=theme.SURFACE_GREY, border_color=theme.BORDER_MUTED,
             text_color=theme.TEXT_PRIMARY, placeholder_text=placeholder,
             font=(theme.FONT_INTERFACE_FAMILY, theme.FONT_SIZE_LABEL, "bold" if bold else "normal"),
+        )
+        if value:
+            entry.insert(0, value)
+        return entry
+
+    def _cell_entry(self, parent, value: str) -> tk.Entry:
+        """A table cell, as a plain Tk entry.
+
+        A CTkEntry is a composite of canvas items; a grid needs one per cell
+        and the whole editor is rebuilt whenever the grid is resized. Measured
+        in place, a cell costs ~15ms as a CTkEntry against ~3ms as a Tk entry
+        (the widget itself is ~10ms vs ~0.1ms, the rest is grid layout), so
+        the swap keeps a wide table's rebuild off the multi-second mark -
+        which matters more under Aqua, where widget creation is slower than
+        under X11. Styled flat to sit with the CTk widgets around it; the
+        document canvas renders its dense grids the same way.
+        """
+        entry = tk.Entry(
+            parent, bg=theme.SURFACE_GREY, fg=theme.TEXT_PRIMARY,
+            insertbackground=theme.TEXT_PRIMARY, relief="flat",
+            highlightthickness=1, highlightbackground=theme.BORDER_MUTED,
+            highlightcolor=theme.ACCENT_TECH_BLUE, borderwidth=4,
+            font=(theme.FONT_INTERFACE_FAMILY, theme.FONT_SIZE_LABEL),
         )
         if value:
             entry.insert(0, value)
@@ -1117,9 +1188,15 @@ class TemplateBuilderWindow(ctk.CTkToplevel):
         block.set_header(col, value)
         self._mark_dirty()
 
+    def _set_table_cell(self, block: TemplateBlock, row: int, col: int, value: str) -> None:
+        block.set_cell(row, col, value)
+        self._mark_dirty()
+
     def _resize_table(self, block: TemplateBlock, rows: int, cols: int) -> None:
         block.set_table_size(rows, cols)
         self._mark_dirty()
+        # Refreshes the Layers outline too (it carries the row×column count),
+        # so no separate sidebar rebuild here.
         self._rebuild_editor()
 
     def _set_col_weight(self, block: TemplateBlock, col: int, weight: int) -> None:

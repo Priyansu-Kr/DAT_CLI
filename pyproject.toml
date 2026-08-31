@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "developer-automation-toolkit"
-version = "0.1.0"
+version = "0.2.0"
 description = "Cross-platform Developer Automation Toolkit (DAT) - IDE-independent CLI & MCP Server"
 readme = "README.md"
 authors = [{ name = "Developer Automation Toolkit Team" }]

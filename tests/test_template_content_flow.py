@@ -6,7 +6,13 @@ locked down without needing a Tk display.
 """
 import unittest
 
-from dat.gui.state import GuiState, build_preview_content, structure_toggle_items
+from dat.gui.state import (
+    GuiState,
+    build_preview_content,
+    editable_list_tokens,
+    structure_toggle_items,
+)
+from dat.models.screenshot_info import ScreenshotInfo
 from dat.models.template_model import (
     BLOCK_BULLET_LIST,
     BLOCK_PARAGRAPH,
@@ -249,6 +255,102 @@ class TestEditingActiveStructure(unittest.TestCase):
             f for b in editable for f in content_fields(b) if f.kind != FIELD_NOTE
         ]
         self.assertEqual(len(inputs), 3)
+
+
+class TestEditingListTokenContent(unittest.TestCase):
+    """A `{{test_cases}}` cell expands into rows that have no widget of their
+    own, so the list behind it is what the Control Center has to offer."""
+
+    def _template_with_tokens(self) -> DocumentTemplate:
+        table = TemplateBlock.create(BLOCK_TABLE)
+        table.set_table_size(1, 2)
+        table.set_header(0, "S. No.")
+        table.set_header(1, "Test Cases")
+        table.set_cell(0, 0, "{{index}}")
+        table.set_cell(0, 1, "{{test_cases}}")
+        bullets = TemplateBlock(kind=BLOCK_BULLET_LIST, items=["{{test_cases}}"])
+        return DocumentTemplate(name="T", sections=[
+            TemplateSection(title="Test Cases", blocks=[table, bullets])
+        ])
+
+    def test_only_referenced_editable_tokens_are_offered(self):
+        state = GuiState()
+        state.set_active_template(self._template_with_tokens())
+        self.assertEqual(editable_list_tokens(state.active_template), ["test_cases"])
+
+    def test_standard_document_offers_no_token_lists(self):
+        self.assertEqual(editable_list_tokens(None), [])
+
+    def test_tokens_are_offered_in_panel_order(self):
+        template = DocumentTemplate(name="T", sections=[TemplateSection(
+            title="S",
+            blocks=[TemplateBlock(kind=BLOCK_BULLET_LIST, items=[
+                "{{test_cases}}", "{{key_points}}", "{{modules}}",
+            ])],
+        )])
+        # modules is a second spelling of impact_areas, and both land on the
+        # one editor rather than two that fight over the same list.
+        self.assertEqual(
+            editable_list_tokens(template),
+            ["key_points", "test_cases", "impact_areas"],
+        )
+
+    def test_git_derived_tokens_get_no_editor(self):
+        template = DocumentTemplate(name="T", sections=[TemplateSection(
+            title="S", blocks=[TemplateBlock(kind=BLOCK_PARAGRAPH, text="{{changed_files}}")],
+        )])
+        self.assertEqual(editable_list_tokens(template), [])
+
+    def test_editing_test_cases_updates_expanded_rows_and_bullets(self):
+        state = GuiState()
+        state.set_active_template(self._template_with_tokens())
+        state.set_list_token("test_cases", ["Generated case"])
+        self.assertIn("Generated case", _rendered(state))
+
+        state.set_list_token("test_cases", ["Edited case", "Added case"])
+
+        rendered = _rendered(state)
+        self.assertIn("Edited case", rendered)
+        self.assertIn("Added case", rendered)
+        self.assertNotIn("Generated case", rendered)
+
+    def test_index_token_renumbers_after_an_edit(self):
+        state = GuiState()
+        state.set_active_template(self._template_with_tokens())
+        state.set_list_token("test_cases", ["One", "Two", "Three"])
+        state.set_list_token("test_cases", ["Two", "Three"])
+
+        table = next(b for b in build_preview_content(state) if b.kind == "table")
+        self.assertEqual(table.table_rows, [["1", "Two"], ["2", "Three"]])
+
+    def test_dropping_a_test_case_reassigns_its_screenshots(self):
+        state = GuiState(screenshots=[ScreenshotInfo(file_path="/tmp/shot.png")])
+        state.set_active_template(self._template_with_tokens())
+        state.set_list_token("test_cases", ["One", "Two"])
+        state.set_screenshot_test_case("/tmp/shot.png", 1)
+
+        state.set_list_token("test_cases", ["One"])
+
+        self.assertIsNone(state.screenshots[0].test_case_index)
+
+    def test_values_round_trip_through_the_editor(self):
+        state = GuiState()
+        state.set_list_token("key_points", ["A point", "  ", "Another"])
+        # Blank rows are how an editor looks mid-typing; they aren't content.
+        self.assertEqual(state.list_token_values("key_points"), ["A point", "Another"])
+        self.assertTrue(state.summary_user_edited)
+
+    def test_alias_reads_and_writes_the_same_list(self):
+        state = GuiState()
+        state.set_list_token("modules", ["Checkout"])
+        self.assertEqual(state.summary.impact_areas, ["Checkout"])
+        self.assertEqual(state.list_token_values("impact_areas"), ["Checkout"])
+
+    def test_unknown_token_is_ignored(self):
+        state = GuiState()
+        state.set_list_token("changed_files", ["a.py"])
+        self.assertEqual(state.list_token_values("changed_files"), [])
+        self.assertFalse(state.summary_user_edited)
 
 
 if __name__ == "__main__":

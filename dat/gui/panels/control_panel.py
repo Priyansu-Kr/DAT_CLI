@@ -5,7 +5,13 @@ from typing import Callable, Dict, List, Optional, Set, Tuple
 import customtkinter as ctk
 
 from dat.gui import theme
-from dat.gui.state import TOGGLE_LABELS, TOGGLE_ORDER
+from dat.gui.state import (
+    LIST_TOKEN_ITEM_LABELS,
+    LIST_TOKEN_LABELS,
+    TOGGLE_LABELS,
+    TOGGLE_ORDER,
+    editable_list_tokens,
+)
 from dat.gui.widgets.dropzone import DropZone
 from dat.gui.widgets.editable_list import EditableListField
 from dat.gui.widgets.template_content_editor import CHANGE_TEXT, TemplateContentEditor
@@ -38,6 +44,7 @@ class ControlPanel(ctk.CTkScrollableFrame):
         on_delete_template: Optional[Callable[[], None]] = None,
         on_template_selected: Optional[Callable[[Optional[str]], None]] = None,
         on_template_content_change: Optional[Callable[[], None]] = None,
+        on_token_list_change: Optional[Callable[[str, List[str]], None]] = None,
         **kwargs,
     ):
         super().__init__(
@@ -59,10 +66,14 @@ class ControlPanel(ctk.CTkScrollableFrame):
         self.on_delete_template = on_delete_template
         self.on_template_selected = on_template_selected
         self.on_template_content_change = on_template_content_change
+        self.on_token_list_change = on_token_list_change
 
         # label -> template_id (None for the built-in standard document)
         self._template_options: Dict[str, Optional[str]] = {STANDARD_TEMPLATE_LABEL: None}
         self._suppress_template_callback = False
+        # token name -> its editor, for whichever list tokens the active
+        # template references. Empty for the built-in document.
+        self._token_fields: Dict[str, EditableListField] = {}
 
         self._build_header()
         self._build_ticket_field()
@@ -346,6 +357,14 @@ class ControlPanel(ctk.CTkScrollableFrame):
         )
         self.template_content_hint.pack(fill="x", padx=theme.PADDING_MD, pady=(0, 4))
 
+        # Entries behind the template's list tokens. Above the structure's own
+        # fields because a `{{test_cases}}` cell is a placeholder for these -
+        # the rows it expands into exist only in the preview.
+        self.template_tokens_frame = ctk.CTkFrame(
+            self.template_content_frame, fg_color="transparent"
+        )
+        self.template_tokens_frame.pack(fill="x")
+
         self.template_content_editor = TemplateContentEditor(
             self.template_content_frame,
             on_change=self._on_content_change,
@@ -410,6 +429,7 @@ class ControlPanel(ctk.CTkScrollableFrame):
         self,
         template: Optional["DocumentTemplate"] = None,
         visible_section_ids: Optional[Set[str]] = None,
+        token_values: Optional[Dict[str, List[str]]] = None,
     ) -> None:
         """Point the content editor at the active document.
 
@@ -417,14 +437,86 @@ class ControlPanel(ctk.CTkScrollableFrame):
         """
         if template is None:
             self.template_content_editor.set_template(None)
+            self._build_token_lists([], {})
             self._show_ai_content()
             return
 
         self.template_content_hint.configure(
             text=f"Fill in the sections of “{template.name}”"
         )
+        self._build_token_lists(editable_list_tokens(template), token_values or {})
         self.template_content_editor.set_template(template, visible_section_ids)
         self._show_template_content()
+
+    def set_token_list_values(self, token_values: Dict[str, List[str]]) -> None:
+        """Refresh the entries shown in the token editors (e.g. once the AI
+        has produced them), leaving the editors themselves in place."""
+        for token, field in self._token_fields.items():
+            field.set_values(list(token_values.get(token, [])))
+
+    def sync_token_lists(self, token_values: Dict[str, List[str]]) -> None:
+        """Follow a token appearing in (or leaving) the template's content.
+
+        Called on every preview refresh, so it must not disturb an editor
+        that is already correct - ``_build_token_lists`` no-ops for an
+        unchanged token set.
+        """
+        self._build_token_lists(list(token_values.keys()), token_values)
+
+    def _build_token_lists(
+        self, tokens: List[str], token_values: Dict[str, List[str]]
+    ) -> None:
+        """One editable list per list token the template references.
+
+        Rebuilt only when the set of tokens changes: these are refreshed on
+        every keystroke and a rebuild would destroy the entry being typed in.
+        Values need no rebuild - they live in GuiState, and the editors are
+        what write to them.
+        """
+        if list(self._token_fields) == list(tokens):
+            return
+        for child in self.template_tokens_frame.winfo_children():
+            child.destroy()
+        self._token_fields = {}
+        if not tokens:
+            return
+
+        # Wrapped, not clipped: the interface font resolves differently per
+        # platform (Inter on Linux, Segoe UI/SF Pro elsewhere), so a line that
+        # just fits here would run past the panel edge on another machine.
+        wrap = theme.LEFT_PANEL_WIDTH - 2 * theme.PADDING_MD - 20
+
+        ctk.CTkLabel(
+            self.template_tokens_frame,
+            text="Content for {{tokens}} used by this structure",
+            anchor="w", justify="left", wraplength=wrap,
+            text_color=theme.TEXT_MUTED,
+            font=(theme.FONT_INTERFACE_FAMILY, theme.FONT_SIZE_LABEL - 3),
+        ).pack(fill="x", padx=theme.PADDING_MD, pady=(0, 4))
+
+        for token in tokens:
+            label = LIST_TOKEN_LABELS.get(token, token)
+            ctk.CTkLabel(
+                self.template_tokens_frame, text=f"{label}  ·  {{{{{token}}}}}",
+                anchor="w", justify="left", wraplength=wrap,
+                text_color=theme.TEXT_SECONDARY,
+                font=(theme.FONT_INTERFACE_FAMILY, theme.FONT_SIZE_LABEL),
+            ).pack(fill="x", padx=theme.PADDING_MD, pady=(0, 2))
+
+            item_label = LIST_TOKEN_ITEM_LABELS.get(token, "Item")
+            field = EditableListField(
+                self.template_tokens_frame,
+                on_change=lambda values, t=token: self._on_token_list_change(t, values),
+                add_label=f"+ Add {item_label}",
+                row_placeholder=item_label,
+            )
+            field.pack(fill="x", padx=theme.PADDING_MD, pady=(0, theme.PADDING_SM))
+            field.set_values(list(token_values.get(token, [])))
+            self._token_fields[token] = field
+
+    def _on_token_list_change(self, token: str, values: List[str]) -> None:
+        if self.on_token_list_change is not None:
+            self.on_token_list_change(token, values)
 
     def set_content_locked(self, locked: bool, reason: str = "") -> None:
         self.template_content_editor.set_locked(locked, reason)

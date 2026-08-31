@@ -26,7 +26,12 @@ from dat.gui import theme
 from dat.gui.debounce import Debouncer
 from dat.gui.panels.control_panel import ControlPanel
 from dat.gui.panels.preview_panel import PreviewPanel
-from dat.gui.state import GuiState, build_preview_content, structure_toggle_items
+from dat.gui.state import (
+    GuiState,
+    build_preview_content,
+    editable_list_tokens,
+    structure_toggle_items,
+)
 from dat.gui.widgets.template_content_editor import CHANGE_ACTION, CHANGE_TEXT
 from dat.gui.windows.template_builder import TemplateBuilderWindow
 from dat.adapters.ai_adapter import build_git_diff_summary, deadline_for_diff
@@ -182,6 +187,7 @@ class DATGuiApp(*_DND_MIXIN):
             on_delete_template=self._on_delete_template,
             on_template_selected=self._on_template_selected,
             on_template_content_change=self._on_template_content_change,
+            on_token_list_change=self._on_token_list_change,
         )
         self.control_panel.grid(row=0, column=0, sticky="nsw")
 
@@ -300,6 +306,17 @@ class DATGuiApp(*_DND_MIXIN):
         self._sync_screenshot_list()
         self._refresh_preview()
 
+    def _on_token_list_change(self, token: str, values: List[str]):
+        """An entry behind one of the active template's list tokens was edited.
+
+        The token expands into bullets/table rows at render time, so writing
+        the list back and refreshing is all it takes for those to update.
+        """
+        self.state_model.set_list_token(token, values)
+        if token == "test_cases":
+            self._sync_screenshot_list()
+        self._refresh_preview()
+
     def _on_files_added(self, paths: List[str]):
         screenshots = self.container.screenshot_service.process_local_images(paths)
         for shot in screenshots:
@@ -327,8 +344,12 @@ class DATGuiApp(*_DND_MIXIN):
 
     def _refresh_preview(self):
         # Editing content can introduce or remove a token, so the shared
-        # fields are re-evaluated here; the setter no-ops when unchanged.
+        # fields and list-token editors are re-evaluated here; both setters
+        # no-op when unchanged (a rebuild mid-keystroke would lose focus).
         self._refresh_shared_fields()
+        self.control_panel.sync_token_lists(
+            self._token_list_values(self.state_model.active_template)
+        )
         if self.state_model.active_template is not None and not self._builder_is_open():
             # Cheap self-heal: if the builder is gone, editing is ours again.
             self.control_panel.set_content_locked(False)
@@ -403,11 +424,20 @@ class DATGuiApp(*_DND_MIXIN):
             section.section_id
             for section in template.enabled_sections(self.state_model.template_toggles)
         }
-        self.control_panel.set_document_content(template, visible)
+        self.control_panel.set_document_content(
+            template, visible, self._token_list_values(template)
+        )
         self.control_panel.set_content_locked(
             self._builder_is_open(),
             "This structure is open in the Template Builder - close it to edit content here.",
         )
+
+    def _token_list_values(self, template: Optional[DocumentTemplate]) -> dict:
+        """Current entries for each list token the template references."""
+        return {
+            token: self.state_model.list_token_values(token)
+            for token in editable_list_tokens(template)
+        }
 
     def _activate_template(self, template: Optional[DocumentTemplate], persist: bool = True):
         # Any pending content edits belong to the outgoing template; write
@@ -744,6 +774,10 @@ class DATGuiApp(*_DND_MIXIN):
         self.control_panel.set_impact_areas_text(", ".join(summary.impact_areas))
         self.control_panel.set_key_points(summary.key_points)
         self.control_panel.set_test_cases(summary.test_cases)
+        # The same lists feed any {{token}} editors a custom structure shows.
+        self.control_panel.set_token_list_values(
+            self._token_list_values(self.state_model.active_template)
+        )
         self._sync_screenshot_list()
         self._refresh_preview()
 

@@ -43,6 +43,50 @@ TOGGLE_LABELS: Dict[str, str] = {
     "screenshots": "Screenshots",
 }
 
+# List tokens whose entries the user can edit by hand, in panel order.
+# A template writing `{{test_cases}}` expands it into one bullet or table row
+# per entry, and those rows have no widget of their own - the list behind them
+# is what has to be editable, so the Control Center offers it directly.
+# `changed_files` and the code tokens are deliberately absent: they come from
+# git, not from anything a user types.
+EDITABLE_LIST_TOKENS: Tuple[str, ...] = (
+    "key_points",
+    "test_cases",
+    "test_recommendations",
+    "impact_areas",
+)
+
+# Tokens that are a second spelling of the same underlying list.
+LIST_TOKEN_ALIASES: Dict[str, str] = {"modules": "impact_areas"}
+
+LIST_TOKEN_LABELS: Dict[str, str] = {
+    "key_points": "Key Points",
+    "test_cases": "Test Cases",
+    "test_recommendations": "Test Recommendations",
+    "impact_areas": "Affected Module(s)",
+}
+
+LIST_TOKEN_ITEM_LABELS: Dict[str, str] = {
+    "key_points": "Key Point",
+    "test_cases": "Test Case",
+    "test_recommendations": "Recommendation",
+    "impact_areas": "Module",
+}
+
+
+def editable_list_tokens(template: Optional[DocumentTemplate]) -> List[str]:
+    """Editable list tokens ``template`` actually references, in panel order.
+
+    Section toggles are ignored on purpose: hiding a section shouldn't pull
+    the editor - and the user's typed entries with it - out from under them.
+    """
+    if template is None:
+        return []
+    referenced = {
+        LIST_TOKEN_ALIASES.get(token, token) for token in template.referenced_tokens()
+    }
+    return [token for token in EDITABLE_LIST_TOKENS if token in referenced]
+
 
 @dataclass
 class GuiState:
@@ -161,6 +205,25 @@ class GuiState:
         for s in self.screenshots:
             if s.test_case_index is not None and s.test_case_index >= valid_count:
                 s.test_case_index = None
+
+    def list_token_values(self, token: str) -> List[str]:
+        """Current entries behind an editable list token."""
+        token = LIST_TOKEN_ALIASES.get(token, token)
+        if token not in EDITABLE_LIST_TOKENS:
+            return []
+        return list(getattr(self.summary, token, []) or [])
+
+    def set_list_token(self, token: str, values: List[str]) -> None:
+        """Write back entries edited through a token's list editor."""
+        token = LIST_TOKEN_ALIASES.get(token, token)
+        if token == "test_cases":
+            # Keeps the screenshot re-indexing that dropping a case requires.
+            self.set_test_cases(values)
+            return
+        if token not in EDITABLE_LIST_TOKENS:
+            return
+        setattr(self.summary, token, [v for v in values if v.strip()])
+        self.summary_user_edited = True
 
     @classmethod
     def from_git_info(cls, git_info: GitInfo, author: Optional[str] = None) -> "GuiState":

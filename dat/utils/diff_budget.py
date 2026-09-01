@@ -13,11 +13,17 @@ import re
 from dataclasses import dataclass, field
 from typing import List, Tuple
 
-# Roughly 50k tokens of diff - a small fraction of the model's context window,
-# but enough that a multi-file feature is summarised from most of its code
-# rather than the first hunk of each file. Still bounded, because cost and
-# latency both scale with it, and the answer deadline is finite.
-DEFAULT_DIFF_CHAR_BUDGET = 200_000
+# Roughly 125k tokens of diff - about 12% of gemini-3.5-flash-lite's 1,048,576
+# token input window, which is enough for essentially any real branch to be
+# summarised from all of its code rather than a trimmed sample.
+#
+# Deliberately not the full window. This is a ceiling, not an amount: DAT sends
+# the actual diff and this only ever trims it, so raising it further buys
+# nothing for the branches that already fit, while costing every large one
+# linearly in tokens and latency. It also has to stay well under the API's
+# per-minute token allowance - a single request bigger than your TPM is
+# rejected outright rather than queued.
+DEFAULT_DIFF_CHAR_BUDGET = 500_000
 DIFF_CHAR_BUDGET_ENV_VAR = "DAT_AI_DIFF_CHAR_BUDGET"
 
 # Below this, a file's slice is too small to show anything meaningful, so the

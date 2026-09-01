@@ -4,12 +4,20 @@ The adapter is driven through a fake `_run`, so these assert the exact git
 commands issued and how their output is interpreted - no real repository or
 network required.
 """
+import contextlib
+import io
 import os
 import tempfile
 import unittest
 from typing import Dict, List, Optional, Tuple
+from unittest import mock
 
-from dat.adapters.git_adapter import GitAdapter, parse_porcelain_line
+from dat.adapters.git_adapter import (
+    GitAdapter,
+    is_work_status,
+    parse_porcelain_line,
+    untracked_skip_reason,
+)
 
 
 class FakeGit(GitAdapter):
@@ -72,14 +80,55 @@ class TestPorcelainParsing(unittest.TestCase):
         self.assertIsNone(parse_porcelain_line("?? "))
 
 
-class TestChangedFiles(unittest.TestCase):
-    def test_uses_untracked_all_so_new_files_are_listed_individually(self):
-        git = FakeGit({
-            "status --porcelain -uall": (0, " M dat/gui/app.py\n?? pkg/new_one.py\n?? pkg/new_two.py"),
-        })
-        files = git.get_changed_files()
+class TestWorkStatus(unittest.TestCase):
+    """Which porcelain codes count as work worth documenting."""
 
-        self.assertEqual(files, ["dat/gui/app.py", "pkg/new_one.py", "pkg/new_two.py"])
+    def test_modifications_and_additions_count(self):
+        for status in ("M ", " M", "MM", "A ", "AM", "R ", "C ", "T "):
+            self.assertTrue(is_work_status(status), status)
+
+    def test_untracked_and_ignored_do_not(self):
+        self.assertFalse(is_work_status("??"))
+        self.assertFalse(is_work_status("!!"))
+
+    def test_deletions_do_not_in_either_column(self):
+        for status in ("D ", " D", "AD", "RD"):
+            self.assertFalse(is_work_status(status), status)
+
+
+class TestChangedFiles(unittest.TestCase):
+    def test_untracked_files_are_not_listed_as_changes(self):
+        """A scratch note or a local .env in the tree is not part of the
+        change being written up - listing it put clutter straight into the
+        document's "Changes Done" section."""
+        git = FakeGit({
+            "status --porcelain -uall": (0, " M dat/gui/app.py\n?? scratch.txt\n?? .env.local"),
+        })
+        self.assertEqual(git.get_changed_files(), ["dat/gui/app.py"])
+
+    def test_deleted_files_are_not_listed_as_changes(self):
+        git = FakeGit({
+            "status --porcelain -uall": (0, " M kept.py\n D gone.py\nD  also_gone.py"),
+        })
+        self.assertEqual(git.get_changed_files(), ["kept.py"])
+
+    def test_staged_and_unstaged_work_both_count(self):
+        git = FakeGit({
+            "status --porcelain -uall": (0, "A  staged_new.py\n M unstaged_edit.py\nM  staged_edit.py"),
+        })
+        self.assertEqual(
+            git.get_changed_files(),
+            ["staged_edit.py", "staged_new.py", "unstaged_edit.py"],
+        )
+
+    def test_untracked_all_is_still_requested_for_the_diff(self):
+        """`get_changed_files` filters untracked files out, but the *diff* of
+        a brand-new file still has to reach the summary - which needs `-uall`,
+        or git collapses new files into a single directory entry."""
+        git = FakeGit({
+            "status --porcelain -uall": (0, "?? pkg/new_one.py\n?? pkg/new_two.py"),
+        })
+        self.assertEqual(git.get_untracked_files(), ["pkg/new_one.py", "pkg/new_two.py"])
         self.assertTrue(git.issued("-uall"), "without -uall git collapses new files into a directory")
 
     def test_renamed_file_is_listed_once_by_destination(self):
@@ -99,16 +148,61 @@ class TestChangedFiles(unittest.TestCase):
         git = FakeGit({"status --porcelain -uall": (0, " D gone.py\n?? fresh.py")})
         self.assertEqual(git.get_untracked_files(), ["fresh.py"])
 
-    def test_clean_tree_falls_back_to_the_branch_range(self):
-        git = FakeGit({
-            "status --porcelain -uall": (0, ""),
+    def _branch_repo(self, status: str, range_files: str):
+        return FakeGit({
+            "status --porcelain -uall": (0, status),
             "rev-parse --abbrev-ref HEAD": (0, "feature/X-1"),
             "rev-parse HEAD": (0, "headsha"),
             "rev-parse --verify --quiet origin/main": (0, "mainsha"),
             "merge-base HEAD origin/main": (0, "basesha"),
-            "diff --name-only basesha..HEAD": (0, "a.py\nb.py"),
+            "diff --name-only --diff-filter=ACMRT basesha..HEAD": (0, range_files),
         })
+
+    def test_clean_tree_uses_the_branch_range(self):
+        git = self._branch_repo(status="", range_files="a.py\nb.py")
         self.assertEqual(git.get_changed_files(), ["a.py", "b.py"])
+
+    def test_committed_branch_work_is_kept_alongside_a_dirty_tree(self):
+        """A dirty worktree used to *replace* the branch's committed work in
+        the file list, so a document about a branch with four commits and one
+        stray edit described only the stray edit."""
+        git = self._branch_repo(status=" M in_progress.py", range_files="committed.py")
+        self.assertEqual(git.get_changed_files(), ["committed.py", "in_progress.py"])
+
+    def test_a_file_deleted_in_the_worktree_loses_to_the_deletion(self):
+        """Committed on the branch, then deleted before the document is
+        written: the end state is what gets documented."""
+        git = self._branch_repo(status=" D committed.py", range_files="committed.py\nkept.py")
+        self.assertEqual(git.get_changed_files(), ["kept.py"])
+
+    def test_deletions_are_filtered_out_of_the_range_by_git(self):
+        git = self._branch_repo(status="", range_files="a.py")
+        git.get_changed_files()
+        self.assertTrue(
+            git.issued("--diff-filter=ACMRT"),
+            "the commit range must exclude deletions too, not just the worktree",
+        )
+
+    def test_on_main_a_dirty_tree_does_not_pull_in_the_previous_commit(self):
+        """With no branch point, `HEAD~1..HEAD` is somebody else's last commit
+        as often as it is ours - it belongs in the document only when there is
+        no uncommitted work that supersedes it."""
+        git = FakeGit({
+            "status --porcelain -uall": (0, " M mine.py"),
+            "rev-parse --abbrev-ref HEAD": (0, "main"),
+            "rev-parse HEAD": (0, "headsha"),
+            "diff --name-only --diff-filter=ACMRT HEAD~1..HEAD": (0, "someone_elses.py"),
+        })
+        self.assertEqual(git.get_changed_files(), ["mine.py"])
+
+    def test_on_main_a_clean_tree_still_describes_the_last_commit(self):
+        git = FakeGit({
+            "status --porcelain -uall": (0, ""),
+            "rev-parse --abbrev-ref HEAD": (0, "main"),
+            "rev-parse HEAD": (0, "headsha"),
+            "diff --name-only --diff-filter=ACMRT HEAD~1..HEAD": (0, "last_commit.py"),
+        })
+        self.assertEqual(git.get_changed_files(), ["last_commit.py"])
 
 
 class TestBaseRefAndCommits(unittest.TestCase):
@@ -279,6 +373,138 @@ class TestUntrackedDiff(unittest.TestCase):
 
         for call in git.calls:
             self.assertNotIn("add", call, "must not stage anything in the user's repo")
+
+
+class TestSensitiveUntrackedFiles(unittest.TestCase):
+    """Untracked files are read by DAT and their whole contents go into the
+    AI prompt - which, with a Gemini key, leaves the machine. No reviewer ever
+    approved these files, so credentials must never be among them."""
+
+    def test_credential_files_are_refused(self):
+        for name in (
+            ".env", ".env.local", "prod.env",
+            "local.properties", "google-services.json", "GoogleService-Info.plist",
+            "serviceAccount.json", "myapp-adminsdk-abc123.json",
+            "deploy.pem", "release.jks", "upload.keystore", "server.key", "cert.crt",
+            "id_rsa", "id_ed25519",
+            ".npmrc", ".netrc", ".pypirc", ".pgpass",
+            "db_credentials.ini", "aws_secrets.yaml", "user_password.txt",
+            "terraform.tfstate",
+        ):
+            self.assertEqual(
+                untracked_skip_reason(name),
+                "looks like a credential or local configuration",
+                f"{name} must never be read",
+            )
+
+    def test_case_and_directory_do_not_defeat_the_check(self):
+        """The same file is `.ENV` on one machine and `.env` on another, and
+        it is just as sensitive three directories down."""
+        self.assertIsNotNone(untracked_skip_reason(".ENV.Production"))
+        self.assertIsNotNone(untracked_skip_reason("app/config/local.properties"))
+        self.assertIsNotNone(untracked_skip_reason("app\\config\\deploy.PEM"))
+
+    def test_generated_and_editor_files_are_refused_as_noise(self):
+        for name in ("debug.log", "bundle.min.js", "app.js.map", "package-lock.json",
+                     "yarn.lock", "notes.py.bak", ".DS_Store"):
+            self.assertEqual(
+                untracked_skip_reason(name),
+                "generated or editor file, not reviewable source",
+                name,
+            )
+
+    def test_real_source_files_are_still_read(self):
+        """The filter must not cost DAT the thing it exists for: a brand-new
+        screen or class reaching the summary."""
+        for name in ("new_screen.py", "SyncService.kt", "Widget.vue", "main.dart",
+                     "api/routes.ts", "styles.scss", "Dockerfile", "README.md",
+                     "schema.sql", "CMakeLists.txt"):
+            self.assertIsNone(untracked_skip_reason(name), name)
+
+    def test_extra_patterns_come_from_the_environment(self):
+        with mock.patch.dict(os.environ, {"DAT_UNTRACKED_EXCLUDE": "fixtures/*.json, *.internal"}):
+            self.assertEqual(
+                untracked_skip_reason("fixtures/big.json"),
+                "excluded by $DAT_UNTRACKED_EXCLUDE",
+            )
+            self.assertEqual(
+                untracked_skip_reason("notes.internal"),
+                "excluded by $DAT_UNTRACKED_EXCLUDE",
+            )
+            self.assertIsNone(untracked_skip_reason("src/app.json"))
+
+    def test_an_empty_environment_variable_excludes_nothing(self):
+        with mock.patch.dict(os.environ, {"DAT_UNTRACKED_EXCLUDE": " , "}):
+            self.assertIsNone(untracked_skip_reason("app.py"))
+
+
+class TestSensitiveContentNeverReachesTheDiff(unittest.TestCase):
+    def setUp(self):
+        self.repo = tempfile.mkdtemp(prefix="dat-leak-")
+
+    def _write(self, name: str, content: bytes) -> None:
+        path = os.path.join(self.repo, name)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as f:
+            f.write(content)
+
+    def _diff(self, status: str) -> str:
+        git = FakeGit({"status --porcelain -uall": (0, status), "diff HEAD": (0, "")})
+        with contextlib.redirect_stderr(io.StringIO()):
+            return git.get_raw_diff(cwd=self.repo)
+
+    def test_api_key_in_an_untracked_env_file_is_not_in_the_prompt(self):
+        self._write(".env.local", b"GEMINI_KEY=AIzaSyREAL_SECRET\n")
+        self._write("new_screen.py", b"class NewScreen:\n    pass\n")
+
+        diff = self._diff("?? .env.local\n?? new_screen.py")
+
+        self.assertNotIn("AIzaSyREAL_SECRET", diff)
+        self.assertNotIn(".env.local", diff)
+        self.assertIn("+class NewScreen:", diff, "real new source must survive the filter")
+
+    def test_signing_password_in_local_properties_is_not_in_the_prompt(self):
+        self._write("local.properties", b"sdk.dir=/opt/android\nSIGNING_PASS=hunter2\n")
+        self.assertNotIn("hunter2", self._diff("?? local.properties"))
+
+    def test_private_key_is_not_in_the_prompt(self):
+        self._write("deploy.pem", b"-----BEGIN RSA PRIVATE KEY-----\nMIIEow==\n")
+        self.assertNotIn("PRIVATE KEY", self._diff("?? deploy.pem"))
+
+    def test_skipped_files_are_reported_on_stderr_not_stdout(self):
+        """A silent drop is the one thing this filter must not do - and stdout
+        carries the MCP server's JSON-RPC stream, so the notice cannot go there."""
+        self._write(".env", b"KEY=v\n")
+        git = FakeGit({"status --porcelain -uall": (0, "?? .env")})
+
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            git.get_untracked_diff(cwd=self.repo)
+
+        self.assertEqual(out.getvalue(), "", "stdout must stay pure for JSON-RPC")
+        self.assertIn(".env", err.getvalue())
+        self.assertIn("credential", err.getvalue())
+        self.assertIn("git add", err.getvalue(), "the notice must say how to override it")
+
+    def test_nothing_is_reported_when_nothing_was_skipped(self):
+        self._write("app.py", b"x = 1\n")
+        git = FakeGit({"status --porcelain -uall": (0, "?? app.py")})
+
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            git.get_untracked_diff(cwd=self.repo)
+
+        self.assertEqual(err.getvalue(), "")
+
+    def test_staging_a_file_is_the_deliberate_way_to_include_it(self):
+        """The escape hatch: staged content reaches the AI through
+        `git diff HEAD`, so sharing it is an explicit act."""
+        self._write("local.properties", b"SIGNING_PASS=hunter2\n")
+        git = FakeGit({
+            "status --porcelain -uall": (0, "A  local.properties"),
+            "diff HEAD": (0, "diff --git a/local.properties b/local.properties\n+SIGNING_PASS=hunter2"),
+        })
+        self.assertIn("hunter2", git.get_raw_diff(cwd=self.repo))
 
 
 if __name__ == "__main__":

@@ -346,7 +346,7 @@ the evidence it works from:
 | | Source | Notes |
 | --- | --- | --- |
 | **Diff** | `git diff HEAD` + the content of new untracked files | Falls back to `<merge-base>..HEAD` — every commit on the branch — when the tree is clean, and to `HEAD~1..HEAD` only if there's no branch point |
-| **File list** | `git status --porcelain -uall` | Individual files, renames reported by destination |
+| **File list** | `<merge-base>..HEAD` **plus** `git status --porcelain -uall` | The branch's committed work *and* what's still in the working tree. Modifications and additions only — deletions, untracked files and ignored files are left out, and renames are reported by destination |
 | **Commits** | `<merge-base>..HEAD` (up to 25) | This branch's own commits, not unrelated ones from `main` |
 
 The diff is packed to a character budget that is **shared across files**, so a
@@ -354,12 +354,21 @@ The diff is packed to a character budget that is **shared across files**, so a
 git printed first. Whatever doesn't fit is named in the prompt, so the model
 can reference an omitted file without inventing its contents.
 
-Raise or lower the budget with an environment variable (default 200,000
-characters, roughly 50k tokens; ~150 files can each get a usable share):
+Raise or lower the budget with an environment variable (default 500,000
+characters, roughly 125k tokens — about 12% of `gemini-3.5-flash-lite`'s
+1,048,576-token input window; ~370 files can each get a usable share):
 
 ```bash
-export DAT_AI_DIFF_CHAR_BUDGET=400000
+export DAT_AI_DIFF_CHAR_BUDGET=1000000
 ```
+
+The budget is a **ceiling, not an amount**: DAT sends the diff it actually has,
+and this only ever trims it. A three-file bug fix sends a few thousand
+characters whatever the budget says, so raising it changes nothing unless the
+prompt reports `Diff truncated to fit`. Going much higher is not free — input
+tokens cost money and time, and a single request larger than your account's
+per-minute token allowance is rejected outright rather than queued. Check your
+own limits at [AI Studio](https://aistudio.google.com/rate-limit).
 
 ### Waiting, and what happens when it takes too long
 
@@ -368,19 +377,56 @@ file names — and shows a *"Writing AI summary…"* chip while the model works.
 When the answer arrives the content is replaced; anything you typed in the
 meantime wins, and the AI text stays one click away.
 
-The answer deadline is **15 seconds**, growing by 5s per extra 100k characters
-of prompt, capped at 45s. Miss it and the document keeps the Git-diff content
-with a *"Retry AI"* action — nothing is left half-written. Pin the deadline if
-you'd rather wait (or fail faster):
+The answer deadline is **15 seconds**, growing by 15s per extra 100k characters
+of prompt, capped at 180s — so a small fix still fails fast while a full-budget
+prompt gets the ~90s it needs:
+
+| Prompt size | Deadline |
+| --- | --- |
+| up to 100k chars | 15s |
+| 200k chars | 45s |
+| 500k chars (the default budget) | 90s |
+
+Miss it and the document keeps the Git-diff content with a *"Retry AI"* action
+— nothing is left half-written. Pin the deadline if you'd rather wait (or fail
+faster):
 
 ```bash
 export DAT_AI_TIMEOUT_SECONDS=60
 ```
 
 New files matter here: `git diff` never shows untracked content, so without
-DAT reading them a brand-new screen or class would be listed by name with its
-code unseen. Binary and very large files are skipped, and your git index is
-never modified.
+DAT reading them a brand-new screen or class would have its code unseen.
+Binary and very large files are skipped, and your git index is never modified.
+
+### What is never sent
+
+Untracked files are the one thing DAT reads by itself rather than getting from
+git, so nothing in version control gatekeeps them — a `.env` sitting in your
+project folder is a file no reviewer ever approved sharing. DAT refuses to read
+them, and says so on stderr rather than dropping them silently:
+
+| Refused | Examples |
+| --- | --- |
+| **Credentials and local config** | `.env` / `.env.*`, `local.properties`, `google-services.json`, `GoogleService-Info.plist`, `serviceAccount*.json`, `*-adminsdk-*.json`, `terraform.tfstate`, `.npmrc`, `.netrc`, `.pgpass`, and anything named `*secret*`, `*credential*` or `*password*` |
+| **Keys and certificates** | `*.pem`, `*.key`, `*.jks`, `*.keystore`, `*.p12`, `*.pfx`, `*.crt`, `id_rsa*`, `id_ed25519*` |
+| **Generated / editor files** | `*.log`, `*.min.js`, `*.map`, lock files, `*.bak`, `.DS_Store` |
+
+Files git already ignores never reach DAT at all — `git status` omits them.
+
+Add your own patterns (comma-separated globs, matched against the filename and
+the full path, case-insensitively):
+
+```bash
+export DAT_UNTRACKED_EXCLUDE="fixtures/*.json,*.internal"
+```
+
+**To include a refused file deliberately, `git add` it.** Staged content
+reaches the AI through `git diff HEAD` like any other tracked change, which
+makes sharing it a decision you made rather than a side effect of the file
+being in the folder. The same follows in reverse: this filter covers untracked
+files, so a *tracked* secret already committed to the repository is sent like
+any other tracked change.
 
 None of this applies to the **MCP flow** — there the calling model authors
 `key_points` and `test_cases` from its own reading of the code, and DAT's AI

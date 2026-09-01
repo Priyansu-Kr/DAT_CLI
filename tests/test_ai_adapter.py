@@ -14,6 +14,7 @@ from dat.adapters.ai_adapter import (
     resolve_ai_deadline,
 )
 from dat.models.config_model import AI_PROVIDER_GIT_DIFF
+from dat.utils.diff_budget import DEFAULT_DIFF_CHAR_BUDGET
 
 
 def gemini_response(payload=None):
@@ -127,9 +128,24 @@ class TestAnswerDeadline(unittest.TestCase):
 
     def test_diff_estimate_never_exceeds_the_packed_budget(self):
         """The GUI predicts the deadline from the raw diff, which can be far
-        larger than what actually gets sent."""
+        larger than what actually gets sent. Pinned to the budget constant,
+        not a literal: the two move together whenever the budget changes."""
         huge = "x" * 5_000_000
-        self.assertEqual(deadline_for_diff(huge), resolve_ai_deadline(200_000))
+        self.assertEqual(
+            deadline_for_diff(huge), resolve_ai_deadline(DEFAULT_DIFF_CHAR_BUDGET)
+        )
+
+    def test_a_full_budget_prompt_is_given_time_to_answer(self):
+        """Raising the diff budget without raising the deadline would time out
+        every large branch and silently fall back to the Git-diff summary."""
+        self.assertGreaterEqual(resolve_ai_deadline(DEFAULT_DIFF_CHAR_BUDGET), 60)
+        self.assertLessEqual(resolve_ai_deadline(DEFAULT_DIFF_CHAR_BUDGET), AI_DEADLINE_MAX_SECONDS)
+
+    def test_a_small_change_still_fails_fast(self):
+        """The whole point of the base deadline: a two-file fix must not make
+        the user wait out a long stall before the fallback appears."""
+        self.assertEqual(resolve_ai_deadline(20_000), AI_DEADLINE_BASE_SECONDS)
+        self.assertLessEqual(AI_DEADLINE_BASE_SECONDS, 15)
 
     def test_a_bigger_response_is_requested_than_a_single_screen(self):
         self.assertGreaterEqual(GEMINI_MAX_OUTPUT_TOKENS, 4096)

@@ -19,9 +19,15 @@ GEMINI_CONNECT_TIMEOUT = 10
 # the Preview Panel will not wait out a 90-second stall, and content built
 # from the Git diff is on screen already - but scaled up for genuinely large
 # prompts, so a 20-file refactor isn't guaranteed to miss its own deadline.
+#
+# The growth rate and the cap are tied to the diff budget: a prompt is allowed
+# to be 500k characters, so a deadline that expires at 45s would time out every
+# large branch and silently hand back the Git-diff summary instead - raising
+# the budget without raising this makes the tool worse, not better. A small
+# change still fails fast, which is what the base value protects.
 AI_DEADLINE_BASE_SECONDS = 15
-AI_DEADLINE_EXTRA_PER_100K_CHARS = 5
-AI_DEADLINE_MAX_SECONDS = 45
+AI_DEADLINE_EXTRA_PER_100K_CHARS = 15
+AI_DEADLINE_MAX_SECONDS = 180
 AI_DEADLINE_ENV_VAR = "DAT_AI_TIMEOUT_SECONDS"
 
 

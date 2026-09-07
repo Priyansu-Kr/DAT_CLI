@@ -7,6 +7,8 @@ COMMANDS = [
     ("dat generate-doc", "Generate DOCX/Markdown docs from git + AI"),
     ("dat generate-doc -s", "Open the interactive Preview Panel (GUI)"),
     ("dat gui", "Launch the DAT Control Center dashboard"),
+    ("dat kill", "Close stuck DAT GUI windows"),
+    ("dat mcp-setup", "Connect DAT to your IDE / AI agent (MCP)"),
     ("dat doctor", "Run environment diagnostics"),
     ("dat config", "View or initialize configuration"),
 ]

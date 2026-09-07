@@ -105,6 +105,16 @@ DAT_MCP_LOG_LEVEL=DEBUG dat mcp
 
 ## 3. Connecting an MCP client
 
+> **Shortcut — let DAT write this section for you:**
+> ```bash
+> dat mcp-setup
+> ```
+> Pick your client (Claude Code, Claude Desktop, Kiro, IntelliJ/JetBrains, VS Code, Cursor,
+> Android Studio, Antigravity, or anything else) and it prints these steps with **your** launcher
+> path already substituted, the config file located on **your** machine, and a note if DAT is
+> already configured there. `dat mcp-setup --list` shows which clients it found installed.
+> Everything below is the same information, by hand.
+
 All MCP clients boil down to the same thing: a command to launch the server, plus (optionally) the working
 directory it should start in. Point `command` at your `dat` launcher, `args` at `["mcp"]`, and set `cwd` to the
 project you want it to operate on by default — you can always override the target repo per-call with the
@@ -230,6 +240,23 @@ Add to `.vscode/mcp.json`:
 
 Both examples show the **pip** path; installed from source, swap in `/home/you/DAT_CLI/venv/bin/dat`. Cursor and
 VS Code are usually started from a dock or launcher, which is exactly the case where a bare `dat` fails.
+
+### Kiro, JetBrains IDEs, Android Studio, Antigravity
+
+These all take the same `mcpServers` shape as Claude Desktop above — only the file differs. Run
+`dat mcp-setup <client>` to get the exact path on your machine (versioned IDE directories are found for you);
+these are the locations it looks in:
+
+| Client | Config file | Also reachable from |
+| --- | --- | --- |
+| **Kiro** | `<project>/.kiro/settings/mcp.json`, or `~/.kiro/settings/mcp.json` | Kiro panel → MCP Servers |
+| **IntelliJ IDEA / JetBrains** | `<config>/JetBrains/<IDE><version>/mcp.json` | Settings → Tools → AI Assistant → Model Context Protocol (MCP) |
+| **Android Studio** | `<config>/Google/AndroidStudio<version>/mcp.json` | Gemini panel |
+| **Antigravity** | `~/.gemini/config/mcp_config.json` | Settings → MCP servers → View raw config |
+
+`<config>` is `~/.config` on Linux, `~/Library/Application Support` on macOS, and `%APPDATA%` on Windows.
+Prefer the UI route where one exists — it creates the file in the right place rather than leaving you to guess
+the version-suffixed directory name.
 
 ### Any other MCP client
 

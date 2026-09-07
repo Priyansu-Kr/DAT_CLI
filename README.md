@@ -221,12 +221,68 @@ dat doctor
 # View current configuration (including which content source is active)
 dat config
 
+# Set the name that appears as "Created By" on every generated document
+dat config set author-name "Your Name"
+dat config set author-email you@company.com
+
+# Also settable: where documents are written, and the git binary to use
+dat config set output-dir ./docs
+dat config set git-path /usr/bin/git
+```
+
+Omit the value (`dat config set author-name`) to be prompted for it instead —
+handy for names with spaces. The author DAT puts in a document is resolved in
+this order:
+
+1. `--author "…"` on the command line (or the Author field in the Preview Panel)
+2. `dat config set author-name`, or `$DAT_AUTHOR`
+3. the author segment of your branch name, when it follows the
+   `TICKET-First-Last-Topic` convention
+4. `Developer`, as a last resort
+
+```bash
 # Save a Gemini API key to enable AI-written summaries (or --clear to remove it)
 dat save-api-key
-
-# Start the MCP server (for AI client/IDE integration - see MCP Integration.md)
-dat mcp
 ```
+
+#### Connecting DAT to your IDE or AI agent
+
+```bash
+dat mcp-setup            # pick your client from a list
+dat mcp-setup vscode     # or name it: claude-code, claude-desktop, kiro,
+                         # intellij, vscode, cursor, android-studio, antigravity
+dat mcp-setup --list     # just show the clients, and which are on this machine
+```
+
+It prints the JSON with **your** launcher path already filled in, points at the
+config file that actually exists on this machine (including versioned ones like
+`~/.config/Google/AndroidStudio2026.1.1/mcp.json`), uses the right shape for the
+client (VS Code wants `servers` + `"type": "stdio"`; everyone else wants
+`mcpServers`), and tells you if DAT is already configured there.
+
+> The server it configures is `dat mcp`, which is deliberately not listed in
+> `dat --help`: your MCP client starts it for you (`"args": ["mcp"]`), it isn't
+> a command to type. Run by hand it just sits there waiting for a client that
+> never speaks. Full reference: [MCP Integration.md](./MCP%20Integration.md).
+
+#### Closing a stuck window
+
+A DAT window can occasionally outlive every normal way of closing it — most
+often a Preview Panel the MCP server launched detached, which no longer belongs
+to any terminal. `dat kill` closes DAT's own windows and nothing else:
+
+```bash
+dat kill           # close every DAT GUI window (Control Center + Preview Panels)
+dat kill --list    # show what would be closed, without closing anything
+dat kill --all     # also stop DAT MCP servers and other DAT CLI processes
+dat kill --force   # skip the polite close request and terminate immediately
+```
+
+It matches a process only when its command line is a real DAT entry point
+(`dat …`, `python -m dat.main …`, `python …/dat/main.py …`), so your other
+Python programs are never touched — and it never targets itself, or the
+IDE/MCP server that started it. Windows that ignore the close request are
+force-terminated after 5 seconds (`--timeout` to change that).
 
 ---
 
@@ -346,7 +402,7 @@ the evidence it works from:
 | | Source | Notes |
 | --- | --- | --- |
 | **Diff** | `git diff HEAD` + the content of new untracked files | Falls back to `<merge-base>..HEAD` — every commit on the branch — when the tree is clean, and to `HEAD~1..HEAD` only if there's no branch point |
-| **File list** | `git status --porcelain -uall` | Individual files, renames reported by destination |
+| **File list** | `<merge-base>..HEAD` **plus** `git status --porcelain -uall` | The branch's committed work *and* what's still in the working tree. Modifications and additions only — deletions, untracked files and ignored files are left out, and renames are reported by destination |
 | **Commits** | `<merge-base>..HEAD` (up to 25) | This branch's own commits, not unrelated ones from `main` |
 
 The diff is packed to a character budget that is **shared across files**, so a
@@ -354,12 +410,21 @@ The diff is packed to a character budget that is **shared across files**, so a
 git printed first. Whatever doesn't fit is named in the prompt, so the model
 can reference an omitted file without inventing its contents.
 
-Raise or lower the budget with an environment variable (default 200,000
-characters, roughly 50k tokens; ~150 files can each get a usable share):
+Raise or lower the budget with an environment variable (default 500,000
+characters, roughly 125k tokens — about 12% of `gemini-3.5-flash-lite`'s
+1,048,576-token input window; ~370 files can each get a usable share):
 
 ```bash
-export DAT_AI_DIFF_CHAR_BUDGET=400000
+export DAT_AI_DIFF_CHAR_BUDGET=1000000
 ```
+
+The budget is a **ceiling, not an amount**: DAT sends the diff it actually has,
+and this only ever trims it. A three-file bug fix sends a few thousand
+characters whatever the budget says, so raising it changes nothing unless the
+prompt reports `Diff truncated to fit`. Going much higher is not free — input
+tokens cost money and time, and a single request larger than your account's
+per-minute token allowance is rejected outright rather than queued. Check your
+own limits at [AI Studio](https://aistudio.google.com/rate-limit).
 
 ### Waiting, and what happens when it takes too long
 
@@ -368,19 +433,56 @@ file names — and shows a *"Writing AI summary…"* chip while the model works.
 When the answer arrives the content is replaced; anything you typed in the
 meantime wins, and the AI text stays one click away.
 
-The answer deadline is **15 seconds**, growing by 5s per extra 100k characters
-of prompt, capped at 45s. Miss it and the document keeps the Git-diff content
-with a *"Retry AI"* action — nothing is left half-written. Pin the deadline if
-you'd rather wait (or fail faster):
+The answer deadline is **15 seconds**, growing by 15s per extra 100k characters
+of prompt, capped at 180s — so a small fix still fails fast while a full-budget
+prompt gets the ~90s it needs:
+
+| Prompt size | Deadline |
+| --- | --- |
+| up to 100k chars | 15s |
+| 200k chars | 45s |
+| 500k chars (the default budget) | 90s |
+
+Miss it and the document keeps the Git-diff content with a *"Retry AI"* action
+— nothing is left half-written. Pin the deadline if you'd rather wait (or fail
+faster):
 
 ```bash
 export DAT_AI_TIMEOUT_SECONDS=60
 ```
 
 New files matter here: `git diff` never shows untracked content, so without
-DAT reading them a brand-new screen or class would be listed by name with its
-code unseen. Binary and very large files are skipped, and your git index is
-never modified.
+DAT reading them a brand-new screen or class would have its code unseen.
+Binary and very large files are skipped, and your git index is never modified.
+
+### What is never sent
+
+Untracked files are the one thing DAT reads by itself rather than getting from
+git, so nothing in version control gatekeeps them — a `.env` sitting in your
+project folder is a file no reviewer ever approved sharing. DAT refuses to read
+them, and says so on stderr rather than dropping them silently:
+
+| Refused | Examples |
+| --- | --- |
+| **Credentials and local config** | `.env` / `.env.*`, `local.properties`, `google-services.json`, `GoogleService-Info.plist`, `serviceAccount*.json`, `*-adminsdk-*.json`, `terraform.tfstate`, `.npmrc`, `.netrc`, `.pgpass`, and anything named `*secret*`, `*credential*` or `*password*` |
+| **Keys and certificates** | `*.pem`, `*.key`, `*.jks`, `*.keystore`, `*.p12`, `*.pfx`, `*.crt`, `id_rsa*`, `id_ed25519*` |
+| **Generated / editor files** | `*.log`, `*.min.js`, `*.map`, lock files, `*.bak`, `.DS_Store` |
+
+Files git already ignores never reach DAT at all — `git status` omits them.
+
+Add your own patterns (comma-separated globs, matched against the filename and
+the full path, case-insensitively):
+
+```bash
+export DAT_UNTRACKED_EXCLUDE="fixtures/*.json,*.internal"
+```
+
+**To include a refused file deliberately, `git add` it.** Staged content
+reaches the AI through `git diff HEAD` like any other tracked change, which
+makes sharing it a decision you made rather than a side effect of the file
+being in the folder. The same follows in reverse: this filter covers untracked
+files, so a *tracked* secret already committed to the repository is sent like
+any other tracked change.
 
 None of this applies to the **MCP flow** — there the calling model authors
 `key_points` and `test_cases` from its own reading of the code, and DAT's AI

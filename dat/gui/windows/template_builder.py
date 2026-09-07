@@ -22,7 +22,7 @@ from typing import Callable, List, Optional
 
 import customtkinter as ctk
 
-from dat.gui import theme
+from dat.gui import branding, theme
 from dat.gui.state import build_template_blocks
 from dat.gui.text_fit import truncate_to_length
 from dat.gui.widgets.document_canvas import DocumentCanvas
@@ -150,6 +150,10 @@ class TemplateBuilderWindow(ctk.CTkToplevel):
         self.geometry("1180x820")
         self.minsize(940, 620)
         self.configure(fg_color=theme.BG_DEEP_DARK)
+        # The root window sets a default icon for later Toplevels, but
+        # this window can also be the first one a WM sees on some
+        # desktops - claim the icon explicitly rather than assume.
+        branding.apply(self)
 
         self._build_header()
         self._build_body()

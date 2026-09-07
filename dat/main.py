@@ -6,7 +6,9 @@ from dat.commands.generate_doc import GenerateDocCommand
 from dat.commands.doctor import DoctorCommand
 from dat.commands.config_cmd import ConfigCommand
 from dat.commands.gui_cmd import GuiCommand
+from dat.commands.kill_cmd import KillCommand
 from dat.commands.mcp_cmd import MCPCommand
+from dat.commands.mcp_setup_cmd import McpSetupCommand
 from dat.commands.save_api_key import SaveApiKeyCommand
 from dat.utils.exit_codes import ExitCode
 
@@ -29,7 +31,9 @@ def main():
         "doctor": DoctorCommand(),
         "config": ConfigCommand(),
         "gui": GuiCommand(),
+        "kill": KillCommand(),
         "mcp": MCPCommand(),
+        "mcp-setup": McpSetupCommand(),
         "save-api-key": SaveApiKeyCommand(),
     }
 

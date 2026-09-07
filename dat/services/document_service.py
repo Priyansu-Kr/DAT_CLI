@@ -1,4 +1,5 @@
 from typing import Dict, List, Optional
+from dat.models.config_model import PLACEHOLDER_AUTHOR_NAME
 from dat.models.doc_request import DocRequest, ChangeSummary, DEFAULT_SECTIONS
 from dat.models.screenshot_info import ScreenshotInfo
 from dat.services.git_service import GitService
@@ -26,7 +27,7 @@ class DocumentService:
         self,
         output_path: Optional[str] = None,
         title_override: Optional[str] = None,
-        author: str = "Developer",
+        author: Optional[str] = None,
         approved_by: str = "",
         ticket_override: Optional[str] = None,
         image_paths: Optional[List[str]] = None,
@@ -40,8 +41,14 @@ class DocumentService:
 
         final_title = title_override or git_info.inferred_title
         final_ticket = ticket_override or git_info.ticket_id
-        final_author = author
-        if author == "Developer" and git_info.author_name:final_author = git_info.author_name
+        # A name the caller passed (from `--author`, a seed file, or
+        # `dat config set author-name`) is a deliberate choice and wins.
+        # Only when there is none does the git author stand in.
+        final_author = (
+            (author or "").strip()
+            or git_info.author_name
+            or PLACEHOLDER_AUTHOR_NAME
+        )
 
         # Generate output path from title if not provided
         if not output_path:

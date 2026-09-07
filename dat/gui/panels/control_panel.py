@@ -4,7 +4,7 @@ from typing import Callable, Dict, List, Optional, Set, Tuple
 
 import customtkinter as ctk
 
-from dat.gui import theme
+from dat.gui import branding, theme
 from dat.gui.state import (
     LIST_TOKEN_ITEM_LABELS,
     LIST_TOKEN_LABELS,
@@ -92,11 +92,28 @@ class ControlPanel(ctk.CTkScrollableFrame):
         )
 
     def _build_header(self):
-        title = ctk.CTkLabel(
-            self, text="Control Center", anchor="w", text_color=theme.TEXT_PRIMARY,
+        header = ctk.CTkFrame(self, fg_color="transparent")
+        header.pack(fill="x", padx=theme.PADDING_MD, pady=(theme.PADDING_MD, theme.PADDING_SM))
+
+        logo = branding.wordmark_image(height=22)
+        if logo is not None:
+            # `text=""` and no width/height: the label sizes itself to the
+            # image, so a future logo of different proportions still fits.
+            self.logo_label = ctk.CTkLabel(header, image=logo, text="")
+            self.logo_label.pack(anchor="w")
+            subtitle = ctk.CTkLabel(
+                header, text="CONTROL CENTER", anchor="w", text_color=theme.TEXT_MUTED,
+                font=(theme.FONT_INTERFACE_FAMILY, theme.FONT_SIZE_LABEL - 2, "bold"),
+            )
+            subtitle.pack(anchor="w", pady=(6, 0))
+            return
+
+        # No image (asset missing, or Pillow's Tk bridge unavailable): the
+        # panel still needs a heading, so fall back to the text it had.
+        ctk.CTkLabel(
+            header, text="Control Center", anchor="w", text_color=theme.TEXT_PRIMARY,
             font=(theme.FONT_INTERFACE_FAMILY, theme.FONT_SIZE_HEADING, "bold"),
-        )
-        title.pack(fill="x", padx=theme.PADDING_MD, pady=(theme.PADDING_MD, theme.PADDING_SM))
+        ).pack(fill="x")
 
     def _build_ticket_field(self):
         self._section_label("Ticket ID", icon="🎫").pack(

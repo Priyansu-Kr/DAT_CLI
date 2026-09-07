@@ -35,7 +35,13 @@ class GenerateDocCommand(BaseCommand):
         output_path = args.get("output")
         title_override = args.get("title") or seed_data.get("title")
         ticket_override = args.get("ticket") or seed_data.get("ticket")
-        author = args.get("author") or seed_data.get("author") or self.container.config.author_name
+        # `configured_author_name` is None until the user sets one, which is
+        # what lets the git author through as the fallback further down.
+        author = (
+            args.get("author")
+            or seed_data.get("author")
+            or self.container.config.configured_author_name
+        )
         approved_by = args.get("approved_by") or seed_data.get("approved_by") or ""
         image_paths = list(args.get("images") or seed_data.get("images") or [])
         fmt = args.get("format", "docx")

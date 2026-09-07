@@ -221,12 +221,68 @@ dat doctor
 # View current configuration (including which content source is active)
 dat config
 
+# Set the name that appears as "Created By" on every generated document
+dat config set author-name "Your Name"
+dat config set author-email you@company.com
+
+# Also settable: where documents are written, and the git binary to use
+dat config set output-dir ./docs
+dat config set git-path /usr/bin/git
+```
+
+Omit the value (`dat config set author-name`) to be prompted for it instead —
+handy for names with spaces. The author DAT puts in a document is resolved in
+this order:
+
+1. `--author "…"` on the command line (or the Author field in the Preview Panel)
+2. `dat config set author-name`, or `$DAT_AUTHOR`
+3. the author segment of your branch name, when it follows the
+   `TICKET-First-Last-Topic` convention
+4. `Developer`, as a last resort
+
+```bash
 # Save a Gemini API key to enable AI-written summaries (or --clear to remove it)
 dat save-api-key
-
-# Start the MCP server (for AI client/IDE integration - see MCP Integration.md)
-dat mcp
 ```
+
+#### Connecting DAT to your IDE or AI agent
+
+```bash
+dat mcp-setup            # pick your client from a list
+dat mcp-setup vscode     # or name it: claude-code, claude-desktop, kiro,
+                         # intellij, vscode, cursor, android-studio, antigravity
+dat mcp-setup --list     # just show the clients, and which are on this machine
+```
+
+It prints the JSON with **your** launcher path already filled in, points at the
+config file that actually exists on this machine (including versioned ones like
+`~/.config/Google/AndroidStudio2026.1.1/mcp.json`), uses the right shape for the
+client (VS Code wants `servers` + `"type": "stdio"`; everyone else wants
+`mcpServers`), and tells you if DAT is already configured there.
+
+> The server it configures is `dat mcp`, which is deliberately not listed in
+> `dat --help`: your MCP client starts it for you (`"args": ["mcp"]`), it isn't
+> a command to type. Run by hand it just sits there waiting for a client that
+> never speaks. Full reference: [MCP Integration.md](./MCP%20Integration.md).
+
+#### Closing a stuck window
+
+A DAT window can occasionally outlive every normal way of closing it — most
+often a Preview Panel the MCP server launched detached, which no longer belongs
+to any terminal. `dat kill` closes DAT's own windows and nothing else:
+
+```bash
+dat kill           # close every DAT GUI window (Control Center + Preview Panels)
+dat kill --list    # show what would be closed, without closing anything
+dat kill --all     # also stop DAT MCP servers and other DAT CLI processes
+dat kill --force   # skip the polite close request and terminate immediately
+```
+
+It matches a process only when its command line is a real DAT entry point
+(`dat …`, `python -m dat.main …`, `python …/dat/main.py …`), so your other
+Python programs are never touched — and it never targets itself, or the
+IDE/MCP server that started it. Windows that ignore the close request are
+force-terminated after 5 seconds (`--timeout` to change that).
 
 ---
 

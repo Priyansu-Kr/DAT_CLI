@@ -55,4 +55,6 @@ dat = "dat.main:main"
 include = ["dat*"]
 
 [tool.setuptools.package-data]
-dat = ["*.png"]
+# assets/ holds the window/taskbar icons; without them an installed DAT
+# opens un-branded windows (see dat/gui/branding.py).
+dat = ["*.png", "assets/*.png", "assets/*.ico"]

@@ -62,6 +62,39 @@ class TestCLIArgs(unittest.TestCase):
         self.assertTrue(parse_args(["generate-doc", "--headless"]).headless)
 
 
+class TestHiddenMcpCommand(unittest.TestCase):
+    """`dat mcp` is unadvertised but must keep working: MCP client configs
+    (Android Studio, VS Code, Claude Code) launch it as `"args": ["mcp"]`,
+    so hiding it from the help text must never become removing it."""
+
+    def test_mcp_still_parses(self):
+        args = parse_args(["mcp"])
+        self.assertEqual(args.command, "mcp")
+        self.assertIsNone(args.log_level)
+
+    def test_mcp_log_level_still_parses(self):
+        self.assertEqual(parse_args(["mcp", "--log-level", "DEBUG"]).log_level, "DEBUG")
+
+    def test_mcp_is_absent_from_the_help_text(self):
+        import contextlib
+        import io
+
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer), self.assertRaises(SystemExit):
+            parse_args(["--help"])
+        help_text = buffer.getvalue()
+
+        # `mcp-setup` legitimately appears, so check the choices list for a
+        # standalone `mcp` entry rather than the substring.
+        choices = help_text[help_text.index("{") + 1 : help_text.index("}")]
+        self.assertNotIn("mcp", choices.split(","))
+        self.assertIn("mcp-setup", choices.split(","))
+        self.assertNotIn("stdio server", help_text)
+
+        for advertised in ("generate-doc", "gui", "kill", "mcp-setup", "doctor", "config"):
+            self.assertIn(advertised, help_text)
+
+
 class TestGenerateDocDestination(unittest.TestCase):
     """A generated document goes to the Preview Panel unless --headless."""
 

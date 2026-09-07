@@ -668,7 +668,7 @@ class DATMCPServer:
         output_file = self.container.document_service.generate_documentation(
             output_path=args.get("output_path"),
             title_override=args.get("title"),
-            author=args.get("author") or self.container.config.author_name,
+            author=args.get("author") or self.container.config.configured_author_name,
             approved_by=args.get("approved_by") or "",
             ticket_override=args.get("ticket"),
             image_paths=args.get("images"),

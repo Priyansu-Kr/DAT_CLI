@@ -22,7 +22,7 @@ except ImportError:
     TkinterDnD = None
     _DND_MIXIN = (ctk.CTk,)
 
-from dat.gui import theme
+from dat.gui import branding, theme
 from dat.gui.debounce import Debouncer
 from dat.gui.panels.control_panel import ControlPanel
 from dat.gui.panels.preview_panel import PreviewPanel
@@ -140,6 +140,8 @@ class DATGuiApp(*_DND_MIXIN):
         self.geometry("1280x800")
         self.minsize(960, 600)
         self.configure(fg_color=theme.BG_DEEP_DARK)
+        # Taskbar/dock icon. Best-effort: never blocks the window opening.
+        branding.apply(self)
 
         # GitService already guarantees a usable default GitInfo even when
         # git itself is unavailable/misbehaves, but guard here too so a
@@ -154,7 +156,7 @@ class DATGuiApp(*_DND_MIXIN):
                 author_name="Developer",
             )
         self.state_model = GuiState.from_git_info(
-            git_info, author=author_override or self.container.config.author_name
+            git_info, author=author_override or self.container.config.configured_author_name
         )
         if title_override:
             self.state_model.topic = title_override
